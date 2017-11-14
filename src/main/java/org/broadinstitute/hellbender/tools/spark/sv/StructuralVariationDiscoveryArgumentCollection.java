@@ -108,6 +108,9 @@ public class StructuralVariationDiscoveryArgumentCollection implements Serializa
         @Argument(doc = "Write GFA representation of assemblies in fastq-dir.", fullName = "write-gfas")
         public boolean writeGFAs = false;
 
+        @Argument(doc = "Aggressively simplify local assemblies, ignoring small variants.", fullName = "pop-variant-bubbles")
+        public boolean popVariantBubbles = false;
+
         // --------- locations ----------
 
         @Argument(doc = "bwa-mem index image file", fullName = "aligner-index-image")
