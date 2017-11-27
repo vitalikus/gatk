@@ -1,5 +1,6 @@
 package org.broadinstitute.hellbender.utils.codecs.xsvLocatableTable;
 
+import htsjdk.samtools.SAMFileHeader;
 import htsjdk.tribble.readers.AsciiLineReader;
 import htsjdk.tribble.readers.AsciiLineReaderIterator;
 import org.broadinstitute.hellbender.GATKBaseTest;
@@ -31,7 +32,17 @@ public class XsvLocatableTableCodecUnitTest extends GATKBaseTest {
     private static final String TEST_RESOURCE_DIR = publicTestDir + "org/broadinstitute/hellbender/utils/codecs/xsvLocatableTable" + File.separator;
     private static final String TEST_FILE1 = TEST_RESOURCE_DIR + "xsv_locatable_test.csv";
     private static final String TEST_FILE2 = TEST_RESOURCE_DIR + "xsv_locatable_test2.tsv";
+
+    /** Uses column names, instead of index */
+    private static final String TEST_FILE3 = TEST_RESOURCE_DIR + "xsv_locatable_test3.csv";
     private static final String TEST_FILE_NO_CONFIG = TEST_RESOURCE_DIR + "xsv_locatable_test_no_config.csv";
+
+    // Preambles of SAMFileHeaders or just plain ol' comments
+    private static final String TEST_FILE_SAMFILEHEADER = TEST_RESOURCE_DIR + "xsv_locatable_test_samfileheader.tsv";
+    private static final String TEST_FILE_SAMFILEHEADER_CONFIG = TEST_RESOURCE_DIR + "xsv_locatable_test_samfileheader.config";
+
+    private static final String TEST_FILE_MIXED_PREAMBLE = TEST_RESOURCE_DIR + "xsv_locatable_test_mixed_preamble.tsv";
+    private static final String TEST_FILE_MIXED_PREAMBLE_CONFIG = TEST_RESOURCE_DIR + "xsv_locatable_test_mixed_preamble.config";
 
     private static final List<String> file1Headers = Arrays.asList("XSV_LOCATABLE_TEST_NAME_Villain", "XSV_LOCATABLE_TEST_NAME_chr", "XSV_LOCATABLE_TEST_NAME_test_val", "XSV_LOCATABLE_TEST_NAME_start", "XSV_LOCATABLE_TEST_NAME_end", "XSV_LOCATABLE_TEST_NAME_Bond");
     private static final List<String> file1Line1 = Arrays.asList("Blofeld", "chr19", "test_val_chr19", "8959519", "9092018", "Connery");
@@ -56,6 +67,7 @@ public class XsvLocatableTableCodecUnitTest extends GATKBaseTest {
                 { TEST_FILE1, true },
                 { TEST_FILE2, true },
                 { TEST_FILE_NO_CONFIG, false },
+                { TEST_FILE3, true },
         };
     }
 
@@ -75,6 +87,12 @@ public class XsvLocatableTableCodecUnitTest extends GATKBaseTest {
                         new XsvTableFeature(1, 2, 4, file2Headers, file2Line2, "SECOND_XSV_NAME")
                     )
                 },
+                { TEST_FILE3,
+                    Arrays.asList(
+                            new XsvTableFeature(1, 3, 4, file1Headers, file1Line1, "XSV_LOCATABLE_TEST_NAME"),
+                            new XsvTableFeature(1, 3, 4, file1Headers, file1Line2, "XSV_LOCATABLE_TEST_NAME")
+                    )
+                }
         };
     }
 
@@ -206,4 +224,60 @@ public class XsvLocatableTableCodecUnitTest extends GATKBaseTest {
         Assert.assertEquals(properties, expected);
     }
 
+    @Test
+    public void testRenderSamFileHeaderFromNoPreamble() {
+        final XsvLocatableTableCodec xsvLocatableTableCodec = new XsvLocatableTableCodec();
+        final String filePath = TEST_FILE3;
+        readHeaderOnly(xsvLocatableTableCodec, filePath);
+
+        final SAMFileHeader emptyHeader = xsvLocatableTableCodec.renderSamFileHeader();
+
+        Assert.assertEquals(emptyHeader.getComments().size(), 0);
+        Assert.assertEquals(emptyHeader.getReadGroups().size(), 0);
+        Assert.assertEquals(emptyHeader.getSequenceDictionary().size(), 0);
+    }
+
+    private List<String> readHeaderOnly(final XsvLocatableTableCodec xsvLocatableTableCodec, final String filePath) {
+        List<String> header = null;
+
+        if (xsvLocatableTableCodec.canDecode(filePath)) {
+
+            try ( final FileInputStream fileInputStream = new FileInputStream(filePath)) {
+                final AsciiLineReaderIterator lineReaderIterator = new AsciiLineReaderIterator(AsciiLineReader.from(fileInputStream));
+                header = xsvLocatableTableCodec.readActualHeader(lineReaderIterator);
+            }
+            catch ( final FileNotFoundException ex ) {
+                throw new GATKException("Error - could not find test file: " + filePath, ex);
+            }
+            catch ( final IOException ex ) {
+                throw new GATKException("Error - IO problem with file " + filePath, ex);
+            }
+        }
+
+        return header;
+    }
+
+    @Test
+    public void testRenderSamFileHeaderFromSamFileHeaderPreamble() {
+        final XsvLocatableTableCodec xsvLocatableTableCodec = new XsvLocatableTableCodec();
+        final String filePath = TEST_FILE_SAMFILEHEADER;
+        Assert.assertNotNull(readHeaderOnly(xsvLocatableTableCodec, filePath), "Header could not be decoded, but it should have been okay.");
+
+        final SAMFileHeader populatedHeader = xsvLocatableTableCodec.renderSamFileHeader();
+
+        Assert.assertEquals(populatedHeader.getSequenceDictionary().size(), 1);
+        Assert.assertEquals(populatedHeader.getSequenceDictionary().getSequence(0).getSequenceLength(), 1000000);
+        Assert.assertNotNull(populatedHeader.getReadGroup("GATKCopyNumber"));
+        Assert.assertEquals(populatedHeader.getReadGroup("GATKCopyNumber").getSample(), "sample_cars");
+        Assert.assertEquals(populatedHeader.getComments(), Arrays.asList("@CO\tCars, cars, and cars",
+                "@CO\tNo \"family cars\" in this list."));
+    }
+
+    @Test
+    public void testFalseCanDecodeFromMixedPreambles() {
+        // Test that if we read a preamble that is mixed ("#" and "@"), we return a false for canDecode.
+        final XsvLocatableTableCodec xsvLocatableTableCodec = new XsvLocatableTableCodec();
+        final String filePath = TEST_FILE_MIXED_PREAMBLE;
+        Assert.assertFalse(xsvLocatableTableCodec.canDecode(filePath));
+    }
 }

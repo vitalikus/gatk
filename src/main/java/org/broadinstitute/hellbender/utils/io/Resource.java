@@ -1,6 +1,9 @@
 package org.broadinstitute.hellbender.utils.io;
 
+import org.apache.commons.io.FileUtils;
+
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 
 /**
@@ -63,4 +66,25 @@ public final class Resource {
 
         return inputStream;
     }
+
+
+    // TODO: Test test test
+    // TODO: Is there a better palce for this?
+    /**
+     *  Given a resource path that is either on the file system or in a jar, return a File.
+     *
+     *  Note:  A side-effect is that the temp file will be copied to temporary directory.
+     *
+     * @param resourcePath location of the resource.  If in a jar file, use relative path.
+     * @return the File in a temp directory
+     * @throws IOException
+     */
+    public static File getResourceContentsAsFile(final String resourcePath) throws IOException {
+        final File tmpResourceFile = File.createTempFile("tmp_read_resource_", ".config");
+        FileUtils.copyInputStreamToFile(ClassLoader.getSystemResourceAsStream(resourcePath),
+                tmpResourceFile);
+        return tmpResourceFile;
+    }
+
+
 }
