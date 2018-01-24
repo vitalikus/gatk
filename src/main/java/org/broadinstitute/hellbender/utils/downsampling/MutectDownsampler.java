@@ -1,6 +1,9 @@
 package org.broadinstitute.hellbender.utils.downsampling;
 
+import htsjdk.samtools.SAMFileHeader;
 import org.apache.commons.lang.mutable.MutableInt;
+import org.broadinstitute.hellbender.tools.walkers.mutect.Realigner;
+import org.broadinstitute.hellbender.tools.walkers.mutect.RealignmentFilterArgumentCollection;
 import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.param.ParamUtils;
 import org.broadinstitute.hellbender.utils.read.GATKRead;
@@ -22,6 +25,8 @@ public final class MutectDownsampler extends ReadsDownsampler {
 
     private GATKRead firstReadInStride;
 
+    private final Optional<Realigner> realigner;
+
 
     /**
      * @param maxReadsPerAlignmentStart Maximum number of reads per alignment start position. Must be > 0
@@ -29,7 +34,9 @@ public final class MutectDownsampler extends ReadsDownsampler {
      */
     public MutectDownsampler(final int maxReadsPerAlignmentStart,
                              final int maxSuspiciousReadsPerAlignmentStart,
-                             final int stride) {
+                             final int stride,
+                             final RealignmentFilterArgumentCollection rfac,
+                             final SAMFileHeader header) {
         // convert coverage per base to coverage per stride
         maxCoverage = maxReadsPerAlignmentStart <= 0 ? Integer.MAX_VALUE : (maxReadsPerAlignmentStart * stride);
         this.stride = ParamUtils.isPositive(stride, "stride must be > 0");
@@ -42,6 +49,8 @@ public final class MutectDownsampler extends ReadsDownsampler {
 
         clearItems();
         resetStats();
+        realigner = rfac.bwaMemIndexImage == null ? Optional.empty() :
+                Optional.of(new Realigner(rfac, header));
     }
 
     @Override

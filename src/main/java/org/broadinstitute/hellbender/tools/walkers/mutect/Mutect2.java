@@ -198,7 +198,8 @@ public final class Mutect2 extends AssemblyRegionWalker {
 
     @Override
     protected ReadsDownsampler createDownsampler() {
-        return new MutectDownsampler(maxReadsPerAlignmentStart, MTAC.maxSuspiciousReadsPerAlignmentStart, MTAC.downsamplingStride);
+        return new MutectDownsampler(maxReadsPerAlignmentStart, MTAC.maxSuspiciousReadsPerAlignmentStart, MTAC.downsamplingStride,
+                MTAC.realignmentFilterArgumentCollection, getHeaderForReads());
     }
 
     @Override
