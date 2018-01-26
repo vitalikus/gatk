@@ -25,13 +25,15 @@ public class Realigner {
         aligner.setSplitFactorOption((float) rfac.splitFactor);
     }
 
-    public boolean mapsToSupposedLocation(final GATKRead read, final Interval supposedRealignmentLocation) {
+    public boolean mapsToSupposedLocation(final GATKRead read) {
+        final String assignedContig = read.getAssignedContig();
 
-        final List<BwaMemAlignment> alignments = aligner.alignSeqs(Arrays.asList(read), GATKRead::getBases).get(0);
-        if (supposedRealignmentLocation == null) {
+        if (assignedContig == null) {
             return false;
         }
-        //TODO Incomplete!!!!!
+
+        final List<BwaMemAlignment> alignments = aligner.alignSeqs(Arrays.asList(read), GATKRead::getBases).get(0);
+
         if (alignments.isEmpty()) { // does this ever occur?
             return false;
         }
@@ -46,11 +48,16 @@ public class Realigner {
             return false;
         }
 
+        // TODO: perhaps check number of mismatches in second best alignment?
+
         final int contigId = alignment.getRefId();
         if (contigId < 0) {
             return false;
         }
 
-        return new Interval(realignmentContigs.get(contigId), alignment.getRefStart(), alignment.getRefEnd()).overlaps(supposedRealignmentLocation);
+        // TODO: we need to check that contig is the same or equivalent up to hg38 alt contig
+        // TODO: do this by looking at index.getReferenceContigNames() and bamHeader.getSequenceDictionary().getSequences()
+        // TODO: in IDE and seeing what the correspondence could be
+        // TODO: put in check that start position is within eg 10 Mb of original mapping
     }
 }
