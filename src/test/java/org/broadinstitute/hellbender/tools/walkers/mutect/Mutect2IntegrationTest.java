@@ -219,6 +219,23 @@ public class Mutect2IntegrationTest extends CommandLineProgramTest {
     }
 
     @Test
+    public void testRealignmentFilter() throws Exception {
+        Utils.resetRandomGenerator();
+        final File outputVcf = createTempFile("output", ".vcf");
+
+        final String[] args = {
+                "-I", new File(DREAM_BAMS_DIR, "tumor_4.bam").getAbsolutePath(),
+                "-tumor", "synthetic.challenge.set4.tumour",
+                "-R", b37_reference_20_21,
+                "-L", "20",
+                "--bwa-mem-index-image", "/Users/davidben/Desktop/bwa_mem_hg_38/Homo_sapiens_assembly38.index_bundle",
+                "-O", outputVcf.getAbsolutePath()
+        };
+
+        runCommandLine(args);
+    }
+
+    @Test
     public void testContaminationFilter() throws Exception {
         Utils.resetRandomGenerator();
         final File unfilteredVcf = createTempFile("unfiltered", ".vcf");

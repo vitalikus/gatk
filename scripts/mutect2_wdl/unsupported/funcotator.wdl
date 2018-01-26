@@ -29,7 +29,7 @@ workflow Funcotator {
     File ref_fasta_index
     File ref_dict
     File variant_vcf_to_annotate
-    String reference_version
+    String /dsde/working/davidben/mutect/wdl-test/funcotator_dataSources.v1.0.20180105.tar.gz
     String output_vcf_name
 
     String? data_sources_tar_gz

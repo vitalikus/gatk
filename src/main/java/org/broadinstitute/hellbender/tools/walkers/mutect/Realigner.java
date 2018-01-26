@@ -26,6 +26,7 @@ public class Realigner {
     }
 
     public boolean mapsToSupposedLocation(final GATKRead read) {
+        read.
         final String assignedContig = read.getAssignedContig();
 
         if (assignedContig == null) {
@@ -34,7 +35,7 @@ public class Realigner {
 
         final List<BwaMemAlignment> alignments = aligner.alignSeqs(Arrays.asList(read), GATKRead::getBases).get(0);
 
-        if (alignments.isEmpty()) { // does this ever occur?
+        if (alignments.isEmpty()) {
             return false;
         }
 
@@ -59,5 +60,7 @@ public class Realigner {
         // TODO: do this by looking at index.getReferenceContigNames() and bamHeader.getSequenceDictionary().getSequences()
         // TODO: in IDE and seeing what the correspondence could be
         // TODO: put in check that start position is within eg 10 Mb of original mapping
+
+        return true;
     }
 }

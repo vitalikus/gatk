@@ -49,8 +49,7 @@ public final class MutectDownsampler extends ReadsDownsampler {
 
         clearItems();
         resetStats();
-        realigner = rfac.bwaMemIndexImage == null ? Optional.empty() :
-                Optional.of(new Realigner(rfac, header));
+        realigner = rfac.bwaMemIndexImage == null ? Optional.empty() : Optional.of(new Realigner(rfac, header));
     }
 
     @Override
