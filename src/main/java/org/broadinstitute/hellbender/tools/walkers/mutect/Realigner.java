@@ -26,9 +26,7 @@ public class Realigner {
     }
 
     public boolean mapsToSupposedLocation(final GATKRead read) {
-        read.
         final String assignedContig = read.getAssignedContig();
-
         if (assignedContig == null) {
             return false;
         }
