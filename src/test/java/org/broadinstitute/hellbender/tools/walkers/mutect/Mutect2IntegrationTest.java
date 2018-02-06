@@ -229,6 +229,7 @@ public class Mutect2IntegrationTest extends CommandLineProgramTest {
                 "-R", b37_reference_20_21,
                 "-L", "20",
                 "--bwa-mem-index-image", "/Users/davidben/Desktop/bwa_mem_hg_38/Homo_sapiens_assembly38.index_bundle",
+                "-stride", "50",
                 "-O", outputVcf.getAbsolutePath()
         };
 

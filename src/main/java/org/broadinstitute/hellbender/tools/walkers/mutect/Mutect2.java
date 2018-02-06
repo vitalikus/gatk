@@ -198,8 +198,9 @@ public final class Mutect2 extends AssemblyRegionWalker {
 
     @Override
     protected ReadsDownsampler createDownsampler() {
+        final ReferenceDataSource referenceDataSource = new ReferenceFileSource(referenceArguments.getReferencePath());
         return new MutectDownsampler(maxReadsPerAlignmentStart, MTAC.maxSuspiciousReadsPerAlignmentStart, MTAC.downsamplingStride,
-                MTAC.realignmentFilterArgumentCollection, getHeaderForReads());
+                MTAC.realignmentFilterArgumentCollection, getHeaderForReads(), referenceDataSource);
     }
 
     @Override

@@ -2,6 +2,7 @@ package org.broadinstitute.hellbender.utils.downsampling;
 
 import htsjdk.samtools.SAMFileHeader;
 import org.apache.commons.lang.mutable.MutableInt;
+import org.broadinstitute.hellbender.engine.ReferenceDataSource;
 import org.broadinstitute.hellbender.tools.walkers.mutect.Realigner;
 import org.broadinstitute.hellbender.tools.walkers.mutect.RealignmentFilterArgumentCollection;
 import org.broadinstitute.hellbender.utils.Utils;
@@ -27,6 +28,8 @@ public final class MutectDownsampler extends ReadsDownsampler {
 
     private final Optional<Realigner> realigner;
 
+    final ReferenceDataSource referenceDataSource;
+
 
     /**
      * @param maxReadsPerAlignmentStart Maximum number of reads per alignment start position. Must be > 0
@@ -36,7 +39,8 @@ public final class MutectDownsampler extends ReadsDownsampler {
                              final int maxSuspiciousReadsPerAlignmentStart,
                              final int stride,
                              final RealignmentFilterArgumentCollection rfac,
-                             final SAMFileHeader header) {
+                             final SAMFileHeader header,
+                             final ReferenceDataSource referenceDataSource) {
         // convert coverage per base to coverage per stride
         maxCoverage = maxReadsPerAlignmentStart <= 0 ? Integer.MAX_VALUE : (maxReadsPerAlignmentStart * stride);
         this.stride = ParamUtils.isPositive(stride, "stride must be > 0");
@@ -50,11 +54,18 @@ public final class MutectDownsampler extends ReadsDownsampler {
         clearItems();
         resetStats();
         realigner = rfac.bwaMemIndexImage == null ? Optional.empty() : Optional.of(new Realigner(rfac, header));
+        this.referenceDataSource = referenceDataSource;
     }
 
     @Override
     public void submit( final GATKRead newRead ) {
         Utils.nonNull(newRead);
+        /*if (realigner.isPresent()) {
+            if (!realigner.get().mapsToSupposedLocation(newRead)) {
+                suspiciousReadCount.increment();
+                return;
+            }
+        }*/
         if (ReadUtils.readHasNoAssignedPosition(newRead)) {
             finalizedReads.add(newRead);
             return;
@@ -88,6 +99,14 @@ public final class MutectDownsampler extends ReadsDownsampler {
                 firstReadInStride = newRead;
                 rejectAllReadsInStride = false;
                 suspiciousReadCount.setValue(0);
+            }
+        }
+        if (realigner.isPresent()) {
+            final String contig = newRead.getAssignedContig();
+            final byte[] refBases = referenceDataSource.queryAndPrefetch(contig, newRead.getAssignedStart(), newRead.getUnclippedEnd()).getBases();
+            final Realigner.RealignmentResult realignmentResult = realigner.get().realign(refBases, contig);
+            if (! realignmentResult.mapsToSupposedLocation()) {
+                int k = 4;
             }
         }
     }
