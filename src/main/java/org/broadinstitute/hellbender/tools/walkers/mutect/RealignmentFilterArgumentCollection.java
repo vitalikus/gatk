@@ -7,8 +7,8 @@ import java.io.File;
 
 public class RealignmentFilterArgumentCollection {
 
-    public static final int DEFAULT_MIN_SEED_LENGTH = 16;
-    public static final double DEFAULT_DROP_RATIO = 0.1;
+    public static final int DEFAULT_MIN_SEED_LENGTH = 20;
+    public static final double DEFAULT_DROP_RATIO = 0.5;
     public static final double DEFAULT_SEED_SPLIT_FACTOR = 1.2;
 
     /**

@@ -190,12 +190,20 @@ public class Mutect2IntegrationTest extends CommandLineProgramTest {
         Utils.resetRandomGenerator();
         final File unfilteredVcf = createTempFile("unfiltered", ".vcf");
         final File filteredVcf = createTempFile("filtered", ".vcf");
+        final File bamout = createTempFile("bamout", ".bam");
 
         final String[] args = {
-                "-I", NA12878_20_21_WGS_bam,
-                "-tumor", "NA12878",
+                //"-I", NA12878_20_21_WGS_bam,
+                "-I", "/Users/davidben/broad/mutect-profiling/01115161-TA1.bam",
+                //"-tumor", "NA12878",
+                "-tumor", "01115161-TA1",
+                "-I", "/Users/davidben/broad/mutect-profiling/01115161-B-1.bam",
+                //"-tumor", "NA12878",
+                "-normal", "01115161-B-1",
+                "-bamout", bamout.getAbsolutePath(),
                 "-R", b37_reference_20_21,
-                "-L", "20:10000000-10010000",
+                //"-L", "20:10000000-10010000",
+                "-L", "20",
                 "-germline-resource", GNOMAD.getAbsolutePath(),
                 "-O", unfilteredVcf.getAbsolutePath()
         };
