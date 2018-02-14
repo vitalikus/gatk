@@ -121,9 +121,6 @@ public class FilterAlignmentArtifacts extends VariantWalker {
     public boolean requiresReads() { return true; }
 
     @Override
-    public boolean requiresReference() { return true; }
-
-    @Override
     public void onTraversalStart() {
         realigner = new Realigner(realignmentArgumentCollection, minRealignmentMappingQuality);
         vcfWriter = createVCFWriter(new File(outputVcf));

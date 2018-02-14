@@ -10,8 +10,8 @@ import static org.testng.Assert.*;
 public class FilterAlignmentArtifactsIntegrationTest extends CommandLineProgramTest {
 
     private static final String DREAM_BAMS_DIR = largeFileTestDir + "mutect/dream_synthetic_bams/";
-    private static final String DREAM_VCFS_DIR = publicTestDir + "org/broadinstitute/hellbender/tools/mutect/dream/vcfs/";
-    private static final String DREAM_MASKS_DIR = publicTestDir + "org/broadinstitute/hellbender/tools/mutect/dream/masks/";
+    private static final String DREAM_VCFS_DIR = toolsTestDir + "mutect/dream/vcfs/";
+    private static final String DREAM_MASKS_DIR = toolsTestDir + "mutect/dream/masks/";
 
     @Test
     public void testDreamTruthData() {
@@ -23,7 +23,6 @@ public class FilterAlignmentArtifactsIntegrationTest extends CommandLineProgramT
         final String[] args = {
                 "-I", tumorBam.getAbsolutePath(),
                 "-V", truthVcf.getAbsolutePath(),
-                "-R", b37_reference_20_21,
                 "-L", "20",
                 "--bwa-mem-index-image", "/Users/davidben/Desktop/bwa_mem_hg_38/Homo_sapiens_assembly38.index_bundle",
                 "-XL", mask.getAbsolutePath(),
@@ -31,5 +30,7 @@ public class FilterAlignmentArtifactsIntegrationTest extends CommandLineProgramT
         };
 
         runCommandLine(args);
+
+        int j = 4;
     }
 }
