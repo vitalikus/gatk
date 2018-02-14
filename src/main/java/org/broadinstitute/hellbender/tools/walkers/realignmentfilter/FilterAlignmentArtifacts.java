@@ -1,6 +1,5 @@
 package org.broadinstitute.hellbender.tools.walkers.realignmentfilter;
 
-import htsjdk.samtools.Cigar;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.SAMFileHeader;
@@ -12,21 +11,13 @@ import htsjdk.variant.vcf.VCFHeader;
 import htsjdk.variant.vcf.VCFHeaderLine;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.mutable.MutableInt;
-import org.broadinstitute.barclay.argparser.Argument;
-import org.broadinstitute.barclay.argparser.ArgumentCollection;
-import org.broadinstitute.barclay.argparser.BetaFeature;
-import org.broadinstitute.barclay.argparser.CommandLineProgramProperties;
+import org.broadinstitute.barclay.argparser.*;
 import org.broadinstitute.barclay.help.DocumentedFeature;
-import org.broadinstitute.hellbender.cmdline.ReadFilterArgumentDefinitions;
 import org.broadinstitute.hellbender.cmdline.StandardArgumentDefinitions;
 import org.broadinstitute.hellbender.engine.FeatureContext;
 import org.broadinstitute.hellbender.engine.ReadsContext;
 import org.broadinstitute.hellbender.engine.ReferenceContext;
 import org.broadinstitute.hellbender.engine.VariantWalker;
-import org.broadinstitute.hellbender.tools.exome.FilterByOrientationBias;
-import org.broadinstitute.hellbender.tools.walkers.contamination.CalculateContamination;
-import org.broadinstitute.hellbender.tools.walkers.mutect.*;
-import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.read.AlignmentUtils;
 import org.broadinstitute.hellbender.utils.read.GATKRead;
 import org.broadinstitute.hellbender.utils.read.ReadUtils;
@@ -36,7 +27,6 @@ import picard.cmdline.programgroups.VariantFilteringProgramGroup;
 
 import java.io.File;
 import java.util.List;
-import java.util.OptionalInt;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -87,13 +77,18 @@ import java.util.stream.Collectors;
         programGroup = VariantFilteringProgramGroup.class
 )
 @DocumentedFeature
-@BetaFeature
+@ExperimentalFeature
 public class FilterAlignmentArtifacts extends VariantWalker {
-
-    @Argument(fullName= StandardArgumentDefinitions.OUTPUT_LONG_NAME,
+    @Argument(fullName = StandardArgumentDefinitions.OUTPUT_LONG_NAME,
             shortName=StandardArgumentDefinitions.OUTPUT_SHORT_NAME,
             doc="The output filtered VCF file", optional=false)
     private final String outputVcf = null;
+
+    public static final int DEFAULT_INDEL_START_TOLERANCE = 5;
+    public static final String INDEL_START_TOLERANCE_LONG_NAME = "indel-start-tolerance";
+    @Argument(fullName = INDEL_START_TOLERANCE_LONG_NAME,
+            doc="Max distance between indel start of aligned read in the bam and the variant in the vcf", optional=false)
+    private final int indelStartTolerance = DEFAULT_INDEL_START_TOLERANCE;
 
     @ArgumentCollection
     protected RealignmentArgumentCollection realignmentArgumentCollection = new RealignmentArgumentCollection();
@@ -134,20 +129,18 @@ public class FilterAlignmentArtifacts extends VariantWalker {
             vcfWriter.add(vc);
             return;
         }
-readsContext.getInterval()
+
         final List<String> variantSamples = vc.getGenotypes().stream().filter(g -> !g.isHomRef()).map(g -> g.getSampleName()).collect(Collectors.toList());
-
-        final int readLength = Utils.stream(readsContext).mapToInt(GATKRead::getLength).max().getAsInt();
-
-        refContext.getBases()
 
         final MutableInt failedRealignmentCount = new MutableInt(0);
         final MutableInt succeededRealignmentCount = new MutableInt(0);
+
         for (final GATKRead read : readsContext) {
             if (!variantSamples.contains(ReadUtils.getSampleName(read, header))) {
                 continue;
             }
-            if (readIsConsistentWithVariant(read, vc)) {
+
+            if (supportsVariant(read, vc)) {
 
             }
         }
@@ -163,34 +156,45 @@ readsContext.getInterval()
         }
     }
 
-    private static boolean readIsConsistentWithVariant(final GATKRead read, final VariantContext vc) {
+    private boolean supportsVariant(final GATKRead read, final VariantContext vc) {
         final byte[] readBases = read.getBasesNoCopy();
-        final int readIndexOfVariant = ReadUtils.getReadCoordinateForReferenceCoordinate(read.getSoftStart(), read.getCigar(),
+
+        final int variantPositionInRead = ReadUtils.getReadCoordinateForReferenceCoordinate(read.getSoftStart(), read.getCigar(),
                 vc.getStart(), ReadUtils.ClippingTail.RIGHT_TAIL, true);
-        if ( readIndexOfVariant == ReadUtils.CLIPPING_GOAL_NOT_REACHED || AlignmentUtils.isInsideDeletion(read.getCigar(), readIndexOfVariant)) {
+        if ( variantPositionInRead == ReadUtils.CLIPPING_GOAL_NOT_REACHED || AlignmentUtils.isInsideDeletion(read.getCigar(), variantPositionInRead)) {
             return false;
         }
 
-        final int referenceLength = vc.getReference().length();
         for (final Allele allele : vc.getAlternateAlleles()) {
+            final int referenceLength = vc.getReference().length();
             if (allele.length() == referenceLength) {   // SNP or MNP -- check whether read bases match variant allele bases
-                if (allele.basesMatch(ArrayUtils.subarray(readBases, readIndexOfVariant, Math.min(readIndexOfVariant + allele.length(), readBases.length)))) {
+                if (allele.basesMatch(ArrayUtils.subarray(readBases, variantPositionInRead, Math.min(variantPositionInRead + allele.length(), readBases.length)))) {
                     return true;
                 }
-            } else {    // indel -- check if the read has the right CIGAR operator at this position
+            } else {    // indel -- check if the read has the right CIGAR operator near position -- we don't require exact an exact match because indel representation is non-unique
                 final boolean isDeletion = allele.length() < referenceLength;
-                int baseBeforeCigarElement = -1;    // offset by 1 because the variant position is one base before the first indel base
+                int readPosition = 0;    // offset by 1 because the variant position is one base before the first indel base
                 for (final CigarElement cigarElement : read.getCigarElements()) {
-                    if (baseBeforeCigarElement == readIndexOfVariant) {
-                        if (isDeletion && cigarElement.getOperator() == CigarOperator.D || !isDeletion && cigarElement.getOperator() == CigarOperator.I) {
+                    if (Math.abs(readPosition - variantPositionInRead) <= indelStartTolerance) {
+                        if (isDeletion && mightSupportDeletion(cigarElement) || !isDeletion && mightSupportInsertion(cigarElement)) {
                             return true;
                         }
                     } else {
-                        baseBeforeCigarElement += cigarElement.getLength();
+                        readPosition += cigarElement.getLength();
                     }
                 }
             }
         }
         return false;
+    }
+
+    private static boolean mightSupportDeletion(final CigarElement cigarElement) {
+        final CigarOperator cigarOperator = cigarElement.getOperator();
+        return cigarOperator == CigarOperator.D || cigarOperator == CigarOperator.S;
+    }
+
+    private final static boolean mightSupportInsertion(final CigarElement cigarElement) {
+        final CigarOperator cigarOperator = cigarElement.getOperator();
+        return cigarOperator == CigarOperator.I || cigarOperator == CigarOperator.S;
     }
 }
