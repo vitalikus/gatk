@@ -14,12 +14,13 @@ import java.util.List;
 import java.util.function.Function;
 
 public class Realigner {
-    public static final int MIN_MAP_QUALITY_FOR_REALIGNED_READS = 40;
     private final BwaMemAligner aligner;
+    private final int minMappingQuality;
     private final List<String> realignmentContigs;
 
-    public Realigner(final RealignmentArgumentCollection rfac, final SAMFileHeader bamHeader) {
+    public Realigner(final RealignmentArgumentCollection rfac, final int minMappingQuality) {
         final BwaMemIndex index = new BwaMemIndex(rfac.bwaMemIndexImage);
+        this.minMappingQuality = minMappingQuality;
         realignmentContigs = index.getReferenceContigNames();
         aligner = new BwaMemAligner(index);
         aligner.setMinSeedLengthOption(rfac.minSeedLength);
@@ -52,7 +53,7 @@ public class Realigner {
         }
 
         final BwaMemAlignment alignment = alignments.get(0);
-        if (alignment.getMapQual() < MIN_MAP_QUALITY_FOR_REALIGNED_READS) {
+        if (alignment.getMapQual() < minMappingQuality) {
             return new RealignmentResult(false, alignments);
         }
 
@@ -72,8 +73,8 @@ public class Realigner {
     }
 
     public static class RealignmentResult {
-        final boolean mapsToSupposedLocation;
-        final List<BwaMemAlignment> realignments;
+        private final boolean mapsToSupposedLocation;
+        private final List<BwaMemAlignment> realignments;
 
         public RealignmentResult(boolean mapsToSupposedLocation, List<BwaMemAlignment> realignments) {
             this.mapsToSupposedLocation = mapsToSupposedLocation;

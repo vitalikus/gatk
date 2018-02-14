@@ -18,6 +18,7 @@ import org.broadinstitute.hellbender.engine.FeatureContext;
 import org.broadinstitute.hellbender.engine.ReadsContext;
 import org.broadinstitute.hellbender.engine.ReferenceContext;
 import org.broadinstitute.hellbender.engine.VariantWalker;
+import org.broadinstitute.hellbender.utils.Trilean;
 import org.broadinstitute.hellbender.utils.read.AlignmentUtils;
 import org.broadinstitute.hellbender.utils.read.GATKRead;
 import org.broadinstitute.hellbender.utils.read.ReadUtils;
@@ -26,6 +27,7 @@ import org.broadinstitute.hellbender.utils.variant.GATKVCFHeaderLines;
 import picard.cmdline.programgroups.VariantFilteringProgramGroup;
 
 import java.io.File;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -87,13 +89,31 @@ public class FilterAlignmentArtifacts extends VariantWalker {
     public static final int DEFAULT_INDEL_START_TOLERANCE = 5;
     public static final String INDEL_START_TOLERANCE_LONG_NAME = "indel-start-tolerance";
     @Argument(fullName = INDEL_START_TOLERANCE_LONG_NAME,
-            doc="Max distance between indel start of aligned read in the bam and the variant in the vcf", optional=false)
+            doc="Max distance between indel start of aligned read in the bam and the variant in the vcf", optional=true)
     private final int indelStartTolerance = DEFAULT_INDEL_START_TOLERANCE;
+
+    public static final int DEFAULT_MIN_REALIGNMENT_MAPPING_QUALITY = 20;
+    public static final String MIN_REALIGNMENT_MAPPING_QUALITY_LONG_NAME = "min-realignment-mapping-quality";
+    @Argument(fullName = MIN_REALIGNMENT_MAPPING_QUALITY_LONG_NAME,
+            doc="Minimum realigned mapping quality for a read to be considered good", optional=true)
+    private final int minRealignmentMappingQuality = DEFAULT_MIN_REALIGNMENT_MAPPING_QUALITY;
+
+    public static final int DEFAULT_MAX_FAILED_REALIGNMENTS = 2;
+    public static final String MAX_FAILED_REALIGNMENTS_LONG_NAME = "max-failed-realignments";
+    @Argument(fullName = MAX_FAILED_REALIGNMENTS_LONG_NAME,
+            doc="Maximum number of failed read realignments before a variant is rejected.", optional=true)
+    private final int maxFailedRealignments = DEFAULT_MAX_FAILED_REALIGNMENTS;
+
+    public static final int DEFAULT_SUFFICIENT_GOOD_REALIGNMENTS = 2;
+    public static final String SUFFICIENT_GOOD_REALIGNMENTS_LONG_NAME = "sufficient-good-realignments";
+    @Argument(fullName = SUFFICIENT_GOOD_REALIGNMENTS_LONG_NAME,
+            doc="Sufficient number of good read realignments to accept a variant.", optional=true)
+    private final int sufficientGoodRealignments = DEFAULT_SUFFICIENT_GOOD_REALIGNMENTS;
+
 
     @ArgumentCollection
     protected RealignmentArgumentCollection realignmentArgumentCollection = new RealignmentArgumentCollection();
 
-    private SAMFileHeader header;
     private VariantContextWriter vcfWriter;
     private Realigner realigner;
 
@@ -105,17 +125,15 @@ public class FilterAlignmentArtifacts extends VariantWalker {
 
     @Override
     public void onTraversalStart() {
-        header = getHeaderForReads();
-        realigner = new Realigner(realignmentArgumentCollection, getHeaderForReads());
+        realigner = new Realigner(realignmentArgumentCollection, minRealignmentMappingQuality);
         vcfWriter = createVCFWriter(new File(outputVcf));
 
         final VCFHeader inputHeader = getHeaderForVariants();
-        final Set<VCFHeaderLine> headerLines = inputHeader.getMetaDataInSortedOrder();
+        final Set<VCFHeaderLine> headerLines = new HashSet<>(inputHeader.getMetaDataInSortedOrder());
         headerLines.add(GATKVCFHeaderLines.getFilterLine(GATKVCFConstants.ALIGNMENT_ARTIFACT_FILTER_NAME));
         headerLines.addAll(getDefaultToolVCFHeaderLines());
         final VCFHeader vcfHeader = new VCFHeader(headerLines, inputHeader.getGenotypeSamples());
         vcfWriter.writeHeader(vcfHeader);
-
     }
 
     @Override
@@ -125,28 +143,41 @@ public class FilterAlignmentArtifacts extends VariantWalker {
 
     @Override
     public void apply(final VariantContext vc, final ReadsContext readsContext, final ReferenceContext refContext, final FeatureContext fc) {
-        if (vc.getNAlleles() == 1) {
-            vcfWriter.add(vc);
-            return;
-        }
+        Trilean passesFilter = Trilean.UNKNOWN;
 
-        final List<String> variantSamples = vc.getGenotypes().stream().filter(g -> !g.isHomRef()).map(g -> g.getSampleName()).collect(Collectors.toList());
+        if (vc.getNAlleles() == 1) {
+            passesFilter = Trilean.TRUE;
+        }
 
         final MutableInt failedRealignmentCount = new MutableInt(0);
         final MutableInt succeededRealignmentCount = new MutableInt(0);
 
         for (final GATKRead read : readsContext) {
-            if (!variantSamples.contains(ReadUtils.getSampleName(read, header))) {
+            if (passesFilter != Trilean.UNKNOWN) {
+                break;
+            } else if (!supportsVariant(read, vc)) {
                 continue;
             }
+            final Realigner.RealignmentResult realignmentResult = realigner.realign(read);
 
-            if (supportsVariant(read, vc)) {
+            if (realignmentResult.mapsToSupposedLocation()) {
+                succeededRealignmentCount.increment();
+            } else {
+                failedRealignmentCount.increment();
+            }
 
+            if (failedRealignmentCount.intValue() > maxFailedRealignments) {
+                passesFilter = Trilean.FALSE;
+            } else if (succeededRealignmentCount.intValue() >= sufficientGoodRealignments) {
+                passesFilter = Trilean.TRUE;
             }
         }
 
-        final VariantContextBuilder vcb = new VariantContextBuilder(vc);
-        vcfWriter.add(vcb.make());
+        // if we haven't decided yet due to too few supporting reads, fail if there are more failures than successes
+        passesFilter = passesFilter != Trilean.UNKNOWN ? passesFilter :
+                Trilean.of(failedRealignmentCount.intValue() <= succeededRealignmentCount.intValue());
+
+        vcfWriter.add(passesFilter == Trilean.TRUE ? vc : new VariantContextBuilder(vc).filter(GATKVCFConstants.ALIGNMENT_ARTIFACT_FILTER_NAME).make());
     }
 
     @Override

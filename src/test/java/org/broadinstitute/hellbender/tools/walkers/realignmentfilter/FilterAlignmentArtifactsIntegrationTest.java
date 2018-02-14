@@ -25,9 +25,9 @@ public class FilterAlignmentArtifactsIntegrationTest extends CommandLineProgramT
                 "-V", truthVcf.getAbsolutePath(),
                 "-R", b37_reference_20_21,
                 "-L", "20",
+                "--bwa-mem-index-image", "/Users/davidben/Desktop/bwa_mem_hg_38/Homo_sapiens_assembly38.index_bundle",
                 "-XL", mask.getAbsolutePath(),
-                "-O", filteredVcf.getAbsolutePath(),
-                "--downsampling-stride", "20"
+                "-O", filteredVcf.getAbsolutePath()
         };
 
         runCommandLine(args);
