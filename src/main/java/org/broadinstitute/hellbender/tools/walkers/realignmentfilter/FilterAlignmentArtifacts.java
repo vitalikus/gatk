@@ -179,11 +179,15 @@ public class FilterAlignmentArtifacts extends VariantWalker {
                 succeededRealignmentCount.increment();
             } else {
                 final GATKRead mate = mates.get(read);
-                final Realigner.RealignmentResult mateRealignmentResult = realigner.realign(mate);
-                if (mateRealignmentResult.mapsToSupposedLocation()) {
-                    succeededRealignmentCount.increment();
-                } else {
+                if (mate == null) {
                     failedRealignmentCount.increment();
+                } else {
+                    final Realigner.RealignmentResult mateRealignmentResult = realigner.realign(mate);
+                    if (mateRealignmentResult.mapsToSupposedLocation()) {
+                        succeededRealignmentCount.increment();
+                    } else {
+                        failedRealignmentCount.increment();
+                    }
                 }
             }
 
