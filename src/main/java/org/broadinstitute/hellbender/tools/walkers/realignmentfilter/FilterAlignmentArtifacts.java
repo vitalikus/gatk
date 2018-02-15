@@ -99,11 +99,17 @@ public class FilterAlignmentArtifacts extends VariantWalker {
             doc="Minimum realigned mapping quality for a read to be considered good", optional=true)
     private int minRealignmentMappingQuality = DEFAULT_MIN_REALIGNMENT_MAPPING_QUALITY;
 
-    public static final int DEFAULT_MIN_SUSPICIOUS_MAPPING_QUALITY = 50;
-    public static final String MIN_SUSPICIOUS_MAPPING_QUALITY_LONG_NAME = "min-suspicious-mapping-quality";
-    @Argument(fullName = MIN_SUSPICIOUS_MAPPING_QUALITY_LONG_NAME,
+    public static final int DEFAULT_MAX_SUSPICIOUS_MAPPING_QUALITY = 50;
+    public static final String MAX_SUSPICIOUS_MAPPING_QUALITY_LONG_NAME = "max-suspicious-mapping-quality";
+    @Argument(fullName = MAX_SUSPICIOUS_MAPPING_QUALITY_LONG_NAME,
             doc="Mapping quality below which we attempt realignment", optional=true)
-    private int minSuspiciousMappingQuality = DEFAULT_MIN_SUSPICIOUS_MAPPING_QUALITY;
+    private int minSuspiciousMappingQuality = DEFAULT_MAX_SUSPICIOUS_MAPPING_QUALITY;
+
+    public static final int DEFAULT_MIN_MAPPING_QUALITY = 20;
+    public static final String MIN_MAPPING_QUALITY_LONG_NAME = "min-mapping-quality";
+    @Argument(fullName = MIN_MAPPING_QUALITY_LONG_NAME,
+            doc="Ignore reads with mapping quality less than this", optional=true)
+    private int minMappingQuality = DEFAULT_MIN_MAPPING_QUALITY;
 
     public static final int DEFAULT_MAX_FAILED_REALIGNMENTS = 2;
     public static final String MAX_FAILED_REALIGNMENTS_LONG_NAME = "max-failed-realignments";
@@ -161,7 +167,7 @@ public class FilterAlignmentArtifacts extends VariantWalker {
         for (final GATKRead read : readsContext) {
             if (passesFilter != Trilean.UNKNOWN) {
                 break;
-            } else if (!supportsVariant(read, vc)) {
+            } else if (read.getMappingQuality() < minMappingQuality || !supportsVariant(read, vc)) {
                 continue;
             } else if (read.getMappingQuality() > minSuspiciousMappingQuality) {
                 succeededRealignmentCount.increment();
