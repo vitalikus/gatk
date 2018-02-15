@@ -38,13 +38,13 @@ public class Realigner {
 
     public <T> RealignmentResult realign(final T sequence, final Function<T,byte[]> func, final String assignedContig) {
         if (assignedContig == null) {
-            return new RealignmentResult(false, Collections.emptyList());
+            return new RealignmentResult(true, Collections.emptyList());
         }
 
         final List<BwaMemAlignment> alignments = aligner.alignSeqs(Arrays.asList(sequence), func).get(0);
 
         if (alignments.isEmpty()) {
-            return new RealignmentResult(false, Collections.emptyList());
+            return new RealignmentResult(true, Collections.emptyList());
         }
 
         if (alignments.size() > 1) {
@@ -61,7 +61,7 @@ public class Realigner {
 
         final int contigId = alignment.getRefId();
         if (contigId < 0) {
-            return new RealignmentResult(false, alignments);
+            return new RealignmentResult(true, alignments);
         }
 
         // TODO: we need to check that contig is the same or equivalent up to hg38 alt contig

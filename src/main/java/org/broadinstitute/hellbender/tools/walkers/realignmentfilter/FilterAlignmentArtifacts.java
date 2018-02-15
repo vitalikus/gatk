@@ -98,6 +98,12 @@ public class FilterAlignmentArtifacts extends VariantWalker {
             doc="Minimum realigned mapping quality for a read to be considered good", optional=true)
     private int minRealignmentMappingQuality = DEFAULT_MIN_REALIGNMENT_MAPPING_QUALITY;
 
+    public static final int DEFAULT_MIN_SUSPICIOUS_MAPPING_QUALITY = 50;
+    public static final String MIN_SUSPICIOUS_MAPPING_QUALITY_LONG_NAME = "min-suspicious-mapping-quality";
+    @Argument(fullName = MIN_SUSPICIOUS_MAPPING_QUALITY_LONG_NAME,
+            doc="Mapping quality below which we attempt realignment", optional=true)
+    private int minSuspiciousMappingQuality = DEFAULT_MIN_SUSPICIOUS_MAPPING_QUALITY;
+
     public static final int DEFAULT_MAX_FAILED_REALIGNMENTS = 2;
     public static final String MAX_FAILED_REALIGNMENTS_LONG_NAME = "max-failed-realignments";
     @Argument(fullName = MAX_FAILED_REALIGNMENTS_LONG_NAME,
@@ -153,6 +159,9 @@ public class FilterAlignmentArtifacts extends VariantWalker {
             if (passesFilter != Trilean.UNKNOWN) {
                 break;
             } else if (!supportsVariant(read, vc)) {
+                continue;
+            } else if (read.getMappingQuality() > minSuspiciousMappingQuality) {
+                succeededRealignmentCount.increment();
                 continue;
             }
             final Realigner.RealignmentResult realignmentResult = realigner.realign(read);
