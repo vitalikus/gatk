@@ -21,15 +21,12 @@ public class FilterAlignmentArtifactsIntegrationTest extends CommandLineProgramT
         final File filteredVcf = createTempFile("filtered", ".vcf");
 
         final String[] args = {
-                //"-I", tumorBam.getAbsolutePath(),
-                //"-V", truthVcf.getAbsolutePath(),
-                "-V", "/Volumes/davidben/mutect/validations/test-realignment/dream1/true-positives.vcf",
-                "-I", "/Volumes/cga_tcga-gsc/benchmark/data/realignments/synthetic.challenge.set1.tumor/synthetic.challenge.set1.tumor.bam",
-                //"-L", "20",
-                "-L", "20:22484778-22486778",
+                "-I", tumorBam.getAbsolutePath(),
+                "-V", truthVcf.getAbsolutePath(),
+                "-L", "20",
                 "--bwa-mem-index-image", "/Users/davidben/Desktop/bwa_mem_hg_38/Homo_sapiens_assembly38.index_bundle",
-                "--min-realignment-mapping-quality", "0",
-                //"-XL", mask.getAbsolutePath(),
+                "--min-realignment-mapping-quality", "10",
+                "-XL", mask.getAbsolutePath(),
                 "-O", filteredVcf.getAbsolutePath()
         };
 

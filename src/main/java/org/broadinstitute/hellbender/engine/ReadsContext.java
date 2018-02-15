@@ -2,11 +2,12 @@ package org.broadinstitute.hellbender.engine;
 
 import org.broadinstitute.hellbender.engine.filters.ReadFilter;
 import org.broadinstitute.hellbender.utils.SimpleInterval;
+import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.iterators.ReadFilteringIterator;
 import org.broadinstitute.hellbender.utils.read.GATKRead;
 
-import java.util.Collections;
-import java.util.Iterator;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Wrapper around ReadsDataSource that presents reads overlapping a specific interval to a client,
@@ -98,5 +99,22 @@ public final class ReadsContext implements Iterable<GATKRead> {
         return readFilter == null ?
                 dataSource.query(interval) :
                 new ReadFilteringIterator(dataSource.query(interval), readFilter);
+    }
+
+    public Map<GATKRead, GATKRead> getReadToMateMap(final int fragmentSize) {
+        final Map<GATKRead, GATKRead> result = new HashMap<>();
+        final SimpleInterval expandedInterval = new SimpleInterval(interval.getContig(), Math.max(1, interval.getStart() - fragmentSize), interval.getEnd() + fragmentSize);
+        final Set<String> names = Utils.stream(dataSource.query(interval)).map(GATKRead::getName).collect(Collectors.toSet());
+        final Map<String, GATKRead> readNames = new HashMap<>();
+                Utils.stream(dataSource.query(interval)).forEach(read -> {
+                    readNames.putIfAbsent(read.getName(), read);
+                });
+        Utils.stream(dataSource.query(expandedInterval)).forEach(read -> {
+            final GATKRead overlappingRead = readNames.get(read.getName());
+            if (overlappingRead != null && overlappingRead.getStart() != read.getStart()) {
+                result.put(overlappingRead, read);
+            }
+        });
+        return result;
     }
 }

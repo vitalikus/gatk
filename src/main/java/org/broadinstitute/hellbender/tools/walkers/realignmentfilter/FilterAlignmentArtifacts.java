@@ -29,6 +29,7 @@ import picard.cmdline.programgroups.VariantFilteringProgramGroup;
 import java.io.File;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -155,6 +156,8 @@ public class FilterAlignmentArtifacts extends VariantWalker {
         final MutableInt failedRealignmentCount = new MutableInt(0);
         final MutableInt succeededRealignmentCount = new MutableInt(0);
 
+        final Map<GATKRead, GATKRead> mates = readsContext.getReadToMateMap(500);   //TODO magic constant
+
         for (final GATKRead read : readsContext) {
             if (passesFilter != Trilean.UNKNOWN) {
                 break;
@@ -169,7 +172,13 @@ public class FilterAlignmentArtifacts extends VariantWalker {
             if (realignmentResult.mapsToSupposedLocation()) {
                 succeededRealignmentCount.increment();
             } else {
-                failedRealignmentCount.increment();
+                final GATKRead mate = mates.get(read);
+                final Realigner.RealignmentResult mateRealignmentResult = realigner.realign(mate);
+                if (mateRealignmentResult.mapsToSupposedLocation()) {
+                    succeededRealignmentCount.increment();
+                } else {
+                    failedRealignmentCount.increment();
+                }
             }
 
             if (failedRealignmentCount.intValue() > maxFailedRealignments) {
