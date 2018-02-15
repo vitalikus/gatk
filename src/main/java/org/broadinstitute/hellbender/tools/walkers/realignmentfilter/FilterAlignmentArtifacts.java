@@ -90,25 +90,25 @@ public class FilterAlignmentArtifacts extends VariantWalker {
     public static final String INDEL_START_TOLERANCE_LONG_NAME = "indel-start-tolerance";
     @Argument(fullName = INDEL_START_TOLERANCE_LONG_NAME,
             doc="Max distance between indel start of aligned read in the bam and the variant in the vcf", optional=true)
-    private final int indelStartTolerance = DEFAULT_INDEL_START_TOLERANCE;
+    private int indelStartTolerance = DEFAULT_INDEL_START_TOLERANCE;
 
     public static final int DEFAULT_MIN_REALIGNMENT_MAPPING_QUALITY = 20;
     public static final String MIN_REALIGNMENT_MAPPING_QUALITY_LONG_NAME = "min-realignment-mapping-quality";
     @Argument(fullName = MIN_REALIGNMENT_MAPPING_QUALITY_LONG_NAME,
             doc="Minimum realigned mapping quality for a read to be considered good", optional=true)
-    private final int minRealignmentMappingQuality = DEFAULT_MIN_REALIGNMENT_MAPPING_QUALITY;
+    private int minRealignmentMappingQuality = DEFAULT_MIN_REALIGNMENT_MAPPING_QUALITY;
 
     public static final int DEFAULT_MAX_FAILED_REALIGNMENTS = 2;
     public static final String MAX_FAILED_REALIGNMENTS_LONG_NAME = "max-failed-realignments";
     @Argument(fullName = MAX_FAILED_REALIGNMENTS_LONG_NAME,
             doc="Maximum number of failed read realignments before a variant is rejected.", optional=true)
-    private final int maxFailedRealignments = DEFAULT_MAX_FAILED_REALIGNMENTS;
+    private int maxFailedRealignments = DEFAULT_MAX_FAILED_REALIGNMENTS;
 
     public static final int DEFAULT_SUFFICIENT_GOOD_REALIGNMENTS = 2;
     public static final String SUFFICIENT_GOOD_REALIGNMENTS_LONG_NAME = "sufficient-good-realignments";
     @Argument(fullName = SUFFICIENT_GOOD_REALIGNMENTS_LONG_NAME,
             doc="Sufficient number of good read realignments to accept a variant.", optional=true)
-    private final int sufficientGoodRealignments = DEFAULT_SUFFICIENT_GOOD_REALIGNMENTS;
+    private int sufficientGoodRealignments = DEFAULT_SUFFICIENT_GOOD_REALIGNMENTS;
 
 
     @ArgumentCollection
