@@ -15,6 +15,12 @@ public class RealignmentArgumentCollection {
     public String bwaMemIndexImage;
 
     /**
+     * Turn off the default mate-aware realignment
+     */
+    @Argument(fullName = "dont-use-mates", doc = "Realign individual reads without using their mates", optional = true)
+    public boolean dontUseMates = false;
+
+    /**
      * BWA-mem minimum seed length
      */
     @Argument(fullName = "minimum-seed-length", shortName = "min-seed-length", optional = true, doc = "Minimum number of matching bases to seed a MEM")

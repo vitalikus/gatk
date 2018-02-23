@@ -2,7 +2,6 @@ package org.broadinstitute.hellbender.tools.walkers.realignmentfilter;
 
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
-import htsjdk.samtools.SAMFileHeader;
 import htsjdk.variant.variantcontext.Allele;
 import htsjdk.variant.variantcontext.VariantContext;
 import htsjdk.variant.variantcontext.VariantContextBuilder;
@@ -28,10 +27,8 @@ import picard.cmdline.programgroups.VariantFilteringProgramGroup;
 
 import java.io.File;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * <p>Filter false positive alignment artifacts from a VCF callset.</p>
@@ -93,6 +90,12 @@ public class FilterAlignmentArtifacts extends VariantWalker {
             doc="Max distance between indel start of aligned read in the bam and the variant in the vcf", optional=true)
     private int indelStartTolerance = DEFAULT_INDEL_START_TOLERANCE;
 
+    public static final int DEFAULT_FRAGMENT_SIZE = 1000;
+    public static final String FRAGMENT_SIZE_LONG_NAME = "fragment-size";
+    @Argument(fullName = FRAGMENT_SIZE_LONG_NAME,
+            doc="Distance away from variant to look for reads' mates.", optional=true)
+    private int fragmentSize = DEFAULT_FRAGMENT_SIZE;
+
     public static final int DEFAULT_MIN_REALIGNMENT_MAPPING_QUALITY = 20;
     public static final String MIN_REALIGNMENT_MAPPING_QUALITY_LONG_NAME = "min-realignment-mapping-quality";
     @Argument(fullName = MIN_REALIGNMENT_MAPPING_QUALITY_LONG_NAME,
@@ -103,7 +106,7 @@ public class FilterAlignmentArtifacts extends VariantWalker {
     public static final String MAX_SUSPICIOUS_MAPPING_QUALITY_LONG_NAME = "max-suspicious-mapping-quality";
     @Argument(fullName = MAX_SUSPICIOUS_MAPPING_QUALITY_LONG_NAME,
             doc="Mapping quality below which we attempt realignment", optional=true)
-    private int minSuspiciousMappingQuality = DEFAULT_MAX_SUSPICIOUS_MAPPING_QUALITY;
+    private int maxSuspiciousMappingQuality = DEFAULT_MAX_SUSPICIOUS_MAPPING_QUALITY;
 
     public static final int DEFAULT_MIN_MAPPING_QUALITY = 20;
     public static final String MIN_MAPPING_QUALITY_LONG_NAME = "min-mapping-quality";
@@ -162,34 +165,22 @@ public class FilterAlignmentArtifacts extends VariantWalker {
         final MutableInt failedRealignmentCount = new MutableInt(0);
         final MutableInt succeededRealignmentCount = new MutableInt(0);
 
-        final Map<GATKRead, GATKRead> mates = readsContext.getReadToMateMap(500);   //TODO magic constant
+        final Map<GATKRead, GATKRead> mates = realignmentArgumentCollection.dontUseMates ? null
+                : readsContext.getReadToMateMap(fragmentSize);
 
         for (final GATKRead read : readsContext) {
             if (passesFilter != Trilean.UNKNOWN) {
                 break;
             } else if (read.getMappingQuality() < minMappingQuality || !supportsVariant(read, vc)) {
                 continue;
-            } else if (read.getMappingQuality() > minSuspiciousMappingQuality) {
+            } else if (read.getMappingQuality() > maxSuspiciousMappingQuality) {
                 succeededRealignmentCount.increment();
                 continue;
             }
-            final Realigner.RealignmentResult realignmentResult = realigner.realign(read);
 
-            if (realignmentResult.mapsToSupposedLocation()) {
-                succeededRealignmentCount.increment();
-            } else {
-                final GATKRead mate = mates.get(read);
-                if (mate == null) {
-                    failedRealignmentCount.increment();
-                } else {
-                    final Realigner.RealignmentResult mateRealignmentResult = realigner.realign(mate);
-                    if (mateRealignmentResult.mapsToSupposedLocation()) {
-                        succeededRealignmentCount.increment();
-                    } else {
-                        failedRealignmentCount.increment();
-                    }
-                }
-            }
+            final GATKRead mate = mates == null ? null : mates.get(read);
+            final Realigner.RealignmentResult realignmentResult = mate == null ? realigner.realign(read) : realigner.realign(read, mate);
+            (realignmentResult.isGood() ? succeededRealignmentCount : failedRealignmentCount).increment();
 
             if (failedRealignmentCount.intValue() > maxFailedRealignments) {
                 passesFilter = Trilean.FALSE;

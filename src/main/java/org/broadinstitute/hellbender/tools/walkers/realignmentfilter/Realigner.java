@@ -16,33 +16,30 @@ import java.util.function.Function;
 public class Realigner {
     private final BwaMemAligner aligner;
     private final int minMappingQuality;
-    private final List<String> realignmentContigs;
 
     public Realigner(final RealignmentArgumentCollection rfac, final int minMappingQuality) {
         final BwaMemIndex index = new BwaMemIndex(rfac.bwaMemIndexImage);
         this.minMappingQuality = minMappingQuality;
-        realignmentContigs = index.getReferenceContigNames();
         aligner = new BwaMemAligner(index);
         aligner.setMinSeedLengthOption(rfac.minSeedLength);
         aligner.setDropRatioOption((float) rfac.dropRatio);
         aligner.setSplitFactorOption((float) rfac.splitFactor);
+        if (!rfac.dontUseMates) {
+            aligner.alignPairs();
+        }
     }
 
     public RealignmentResult realign(final GATKRead read) {
-        return realign(read, GATKRead::getBasesNoCopy, read.getAssignedContig());
+        final List<BwaMemAlignment> alignments = aligner.alignSeqs(Arrays.asList(read), GATKRead::getBasesNoCopy).get(0);
+        return checkAlignments(alignments);
     }
 
-    public RealignmentResult realign(final byte[] bases, final String contig) {
-        return realign(bases, x -> x, contig);
+    public RealignmentResult realign(final GATKRead read, final GATKRead mate) {
+        final List<BwaMemAlignment> alignments = aligner.alignSeqs(Arrays.asList(read, mate), GATKRead::getBasesNoCopy).get(0);
+        return checkAlignments(alignments);
     }
 
-    public <T> RealignmentResult realign(final T sequence, final Function<T,byte[]> func, final String assignedContig) {
-        if (assignedContig == null) {
-            return new RealignmentResult(true, Collections.emptyList());
-        }
-
-        final List<BwaMemAlignment> alignments = aligner.alignSeqs(Arrays.asList(sequence), func).get(0);
-
+    public RealignmentResult checkAlignments(final List<BwaMemAlignment> alignments) {
         if (alignments.isEmpty()) {
             return new RealignmentResult(true, Collections.emptyList());
         }
@@ -81,7 +78,7 @@ public class Realigner {
             this.realignments = realignments;
         }
 
-        public boolean mapsToSupposedLocation() { return mapsToSupposedLocation;  }
+        public boolean isGood() { return mapsToSupposedLocation;  }
 
         public List<BwaMemAlignment> getRealignments() { return realignments; }
     }
