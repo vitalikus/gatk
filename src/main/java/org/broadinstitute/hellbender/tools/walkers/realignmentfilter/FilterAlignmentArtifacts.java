@@ -179,6 +179,11 @@ public class FilterAlignmentArtifacts extends VariantWalker {
             }
 
             final GATKRead mate = mates == null ? null : mates.get(read);
+            if (mate == null) {
+                int k = 0;
+            } else {
+                int r = 9;
+            }
             final Realigner.RealignmentResult realignmentResult = mate == null ? realigner.realign(read) : realigner.realign(read, mate);
             (realignmentResult.isGood() ? succeededRealignmentCount : failedRealignmentCount).increment();
 

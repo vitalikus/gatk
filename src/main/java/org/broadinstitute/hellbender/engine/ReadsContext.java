@@ -122,9 +122,9 @@ public final class ReadsContext implements Iterable<GATKRead> {
 
         final Map<GATKRead, GATKRead> result = new HashMap<>();
         final SimpleInterval expandedInterval = new SimpleInterval(interval.getContig(), Math.max(1, interval.getStart() - fragmentSize), interval.getEnd() + fragmentSize);
-        Utils.stream(dataSource.query(expandedInterval)).forEach(read -> {
-            final GATKRead mate = (read.isFirstOfPair() ? readTwos : readOnes).get(read.getName());
-            if (mate != null) {
+        Utils.stream(dataSource.query(expandedInterval)).forEach(mate -> {
+            final GATKRead read = (mate.isFirstOfPair() ? readTwos : readOnes).get(mate.getName());
+            if (read != null) {
                 result.put(read, mate);
             }
         });
