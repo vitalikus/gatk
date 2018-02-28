@@ -71,7 +71,7 @@ public class CNNVariantScoreIntegrationTest extends CommandLineProgramTest {
     /**
      * Run the 2D Model on a small test VCF.
      */
-    @Test(groups = {"python"}, enabled = false)
+    @Test(groups = {"python"})
     public void testInference2d() throws IOException{
         final ArgumentsBuilder argsBuilder = new ArgumentsBuilder();
         argsBuilder.addArgument(StandardArgumentDefinitions.VARIANT_LONG_NAME, inputVCF)

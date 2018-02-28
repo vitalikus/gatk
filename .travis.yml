@@ -12,7 +12,7 @@ env:
   - TEST_TYPE=cloud UPLOAD=true
   - TEST_TYPE=integration TEST_DOCKER=true TEST_VERBOSITY=minimal
   - TEST_TYPE=unit TEST_DOCKER=true TEST_VERBOSITY=minimal
-  - TEST_TYPE=python TEST_DOCKER=true TEST_VERBOSITY=minimal
+  - TEST_TYPE=python TEST_DOCKER=true
   - RUN_CNV_GERMLINE_WDL=true
   - RUN_CNV_SOMATIC_WDL=true
   - RUN_M2_WDL=true
