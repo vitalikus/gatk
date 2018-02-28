@@ -309,6 +309,7 @@ public class CNNVariantScore extends VariantWalker {
     }
 
     private void executePythonCommand(){
+        System.out.println("Starting new batch...");
         final String pythonCommand = String.format(
                 "vqsr_cnn.score_and_write_batch(args, model, tempFile, fifoFile, %d, %d)", curBatchSize, inferenceBatchSize) + NL;
         pythonExecutor.sendAsynchronousCommand(pythonCommand);
