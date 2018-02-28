@@ -215,4 +215,8 @@ public class StructuralVariationDiscoveryArgumentCollection implements Serializa
         public int maxCallableImpreciseVariantDeletionSize = DEFAULT_MAX_CALLABLE_IMPRECISE_DELETION_SIZE;
     }
 
+    public static class TrainSVEvidenceValidatorArgumentCollection implements Serializable {
+        private static final long serialVersionUID = 1L;
+    }
+
 }
