@@ -13,7 +13,7 @@ import java.util.Arrays;
 public class CNNVariantTrainIntegrationTest extends CommandLineProgramTest {
 
 
-    @Test(groups = {"python"})
+    @Test(groups = {"cnnpython"})
     public void testTrainingReferenceModel() throws IOException{
         CNNVariantWriteTensorsIntegrationTest wt = new CNNVariantWriteTensorsIntegrationTest();
         wt.generateReferenceTensors();
@@ -29,7 +29,7 @@ public class CNNVariantTrainIntegrationTest extends CommandLineProgramTest {
         runCommandLine(argsBuilder);
     }
 
-    @Test(groups = {"python"})
+    @Test(groups = {"cnnpython"})
     public void testTrainingReadModel() throws IOException{
         CNNVariantWriteTensorsIntegrationTest wt = new CNNVariantWriteTensorsIntegrationTest();
         wt.generateReadTensors();

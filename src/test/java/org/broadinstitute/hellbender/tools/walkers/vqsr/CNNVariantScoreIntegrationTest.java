@@ -22,7 +22,7 @@ public class CNNVariantScoreIntegrationTest extends CommandLineProgramTest {
     /**
      * Run the tool on a small test VCF.
      */
-    @Test(groups = {"python"})
+    @Test(groups = {"cnnpython"})
     public void testInference() throws IOException{
         final ArgumentsBuilder argsBuilder = new ArgumentsBuilder();
         argsBuilder.addArgument(StandardArgumentDefinitions.VARIANT_LONG_NAME, inputVCF)
@@ -51,7 +51,7 @@ public class CNNVariantScoreIntegrationTest extends CommandLineProgramTest {
 //    }
 
 
-    @Test(groups = {"python"})
+    @Test(groups = {"cnnpython"})
     public void testSmallBatchInference()throws IOException {
         final ArgumentsBuilder argsBuilder = new ArgumentsBuilder();
         argsBuilder.addArgument(StandardArgumentDefinitions.VARIANT_LONG_NAME, inputVCF)
@@ -71,7 +71,7 @@ public class CNNVariantScoreIntegrationTest extends CommandLineProgramTest {
     /**
      * Run the 2D Model on a small test VCF.
      */
-    @Test(groups = {"python"})
+    @Test(groups = {"cnnpython"})
     public void testInference2d() throws IOException{
         final ArgumentsBuilder argsBuilder = new ArgumentsBuilder();
         argsBuilder.addArgument(StandardArgumentDefinitions.VARIANT_LONG_NAME, inputVCF)
