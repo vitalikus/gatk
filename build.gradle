@@ -377,7 +377,7 @@ test {
 
     testLogging {
         testLogging {
-            events "skipped", "failed", "standard_error", "standard_out"
+            events "skipped", "failed"
             exceptionFormat = "full"
         }
         afterSuite { desc, result ->
