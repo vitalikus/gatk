@@ -1,6 +1,7 @@
 package org.broadinstitute.hellbender.tools.spark.sv.evidence;
 
 import jdk.nashorn.internal.runtime.regexp.joni.exception.ValueException;
+import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.tools.spark.sv.StructuralVariationDiscoveryArgumentCollection;
 
 import htsjdk.samtools.SAMFileHeader;
@@ -33,15 +34,18 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Array;
+import java.util.Iterator;
+import java.util.Map;
 
 import org.apache.commons.io.IOUtils;
 
 import org.codehaus.jackson.JsonNode;
 import org.codehaus.jackson.map.ObjectMapper;
+import org.dmg.pmml.Value;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import com.google.gson.Gson;
-import com.fasterxml.jackson.*;
+import com.fasterxml.jackson.databind.node.*;
 
 /**
  * (Internal) Extracts evidence of structural variations from reads
@@ -106,34 +110,80 @@ public final class TrainSVEvidenceValidator extends SparkCommandLineProgram {
      * Runs the pipeline.
      */
     @Override
-    protected void runPipeline(final JavaSparkContext ctx) throws IOException {
+    protected void runPipeline(final JavaSparkContext ctx) {
         // write this!
-        // Load model and create Predictor
-        Predictor predictor = new Predictor(new FileInputStream(classifierModelFile));
+        try {
+            // Load model and create Predictor
+            Predictor predictor = new Predictor(new FileInputStream(classifierModelFile));
 
-        JsonNode testDataNode = new ObjectMapper().readTree(new File(testDataJsonFile));
-        final FVec[] testFeatures = getFVecArrayFromJsonNode(testDataNode.get("X"));
-
-
-        JSONObject testData = JSONObject()
-        JSONObject testData = loadJSONObject(testDataJsonFile);
-        int[] x = myfunc(int, obj);
+            JsonNode testDataNode = new ObjectMapper().readTree(new File(testDataJsonFile));
+            final FVec[] testFeatures = getFVecArrayFromJsonNode(testDataNode.get("X").get("data"));
+        } catch(final Exception err) {
+            throw new GATKException("Doh", err);
+        }
     }
 
     public static FVec[] getFVecArrayFromJsonNode(final JsonNode matrixNode) {
-        final int numRows = jsonArray.length();
+        if(!matrixNode.has("__class__")) {
+            throw new IllegalArgumentException("JSON node does not store python matrix data");
+        }
+        String matrixClass = matrixNode.get("__class__").asText();
+        switch(matrixClass) {
+            case "pandas.DataFrame":
+                return getFVecArrayFromPandasJsonNode(matrixNode.get("data"));
+            case "numpy.array":
+                return getFVecArrayFromNumpyJsonNode(matrixNode.get("data"));
+            default:
+                throw new IllegalArgumentException("JSON node has __class__ = " + matrixClass
+                        + "which is not a supported matrix type");
+        }
+    }
+
+    public static FVec[] getFVecArrayFromNumpyJsonNode(final JsonNode dataNode) {
+        if(!dataNode.isArray()) {
+            throw new IllegalArgumentException("dataNode does not encode a valid numpy array");
+        }
+        final int numRows = dataNode.size();
         final FVecDoubleArraySimpleImpl[] matrix = new FVecDoubleArraySimpleImpl[numRows];
         if (numRows == 0) {
             return matrix;
         }
-        matrix[0] = new FVecDoubleArraySimpleImpl(jsonArray.getJSONArray(0));
+        matrix[0] = new FVecDoubleArraySimpleImpl(dataNode.get(0));
         final int numColumns = matrix[0].length();
         for (int row = 1; row < numRows; ++row) {
-            matrix[row] = new FVecDoubleArraySimpleImpl(jsonArray.getJSONArray(row));
+            matrix[row] = new FVecDoubleArraySimpleImpl(dataNode.get(row));
             final int numRowColumns = matrix[row].length();
             if (numRowColumns != numColumns) {
-                throw new ValueException("Rows in JSONArray have different lengths.");
+                throw new IllegalArgumentException("Rows in JSONArray have different lengths.");
             }
+        }
+        return matrix;
+    }
+
+    public static FVec[] getFVecArrayFromPandasJsonNode(final JsonNode dataNode) {
+        if(!dataNode.isObject()) {
+            throw new IllegalArgumentException("dataNode does not encode a valid pandas DataFrame");
+        }
+        final int numColumns = dataNode.size();
+        if(numColumns == 0) {
+            return new FVec[0];
+        }
+
+        final String firstColumnName = dataNode.fieldNames().next();
+        final int numRows = dataNode.get(firstColumnName).get("values").size();
+        final FVecDoubleArraySimpleImpl[] matrix = new FVecDoubleArraySimpleImpl[numRows];
+        if (numRows == 0) {
+            return matrix;
+        }
+        int row_index = 0;
+        for(final Map.Entry<String, JsonNode> columnEntry: dataNode.fields()) {
+            final FVecDoubleArraySimpleImpl fVec = matrix[row_index];
+            int col_index = 0;
+            for(final JsonNode valueNode: columnEntry.getValue().get("values")) {
+                fVec.set_value(col_index, valueNode.getDoubleValue());
+                ++col_index;
+            }
+            ++row_index;
         }
         return matrix;
     }
@@ -150,7 +200,7 @@ public final class TrainSVEvidenceValidator extends SparkCommandLineProgram {
             matrix[row] = new FVecDoubleArraySimpleImpl(matrixArray.getJSONArray(row));
             final int numRowColumns = matrix[row].length();
             if (numRowColumns != numColumns) {
-                throw new ValueException("Rows in JSONArray have different lengths.");
+                throw new IllegalArgumentException("Rows in JSONArray have different lengths.");
             }
         }
         return matrix;
@@ -159,9 +209,10 @@ public final class TrainSVEvidenceValidator extends SparkCommandLineProgram {
     static class FVecDoubleArraySimpleImpl implements FVec {
         private final double[] values;
 
-        FVecDoubleArraySimpleImpl(double[] values) {
-            this.values = values;
-        }
+        FVecDoubleArraySimpleImpl(final int numFeatures) {this.values = new double[numFeatures];}
+
+        FVecDoubleArraySimpleImpl(final double[] values) {this.values = values;}
+
         FVecDoubleArraySimpleImpl(final JSONArray jsonArray) {
             final int numFeatures = jsonArray.length();
             this.values = new double[numFeatures];
@@ -170,14 +221,25 @@ public final class TrainSVEvidenceValidator extends SparkCommandLineProgram {
             }
         }
 
-        @Override
-        public double fvalue(final int index) {
-            return values[index];
+        FVecDoubleArraySimpleImpl(final JsonNode arrayNode) {
+            if(!arrayNode.isArray()) {
+                throw new IllegalArgumentException("JsonNode does not contain an Array");
+            }
+            final int numFeatures = arrayNode.size();
+            this.values = new double[numFeatures];
+            int ind = 0;
+            for(final JsonNode element: arrayNode) {
+                values[ind] = element.getDoubleValue();
+                ++ind;
+            }
         }
 
-        public int length() {
-            return this.values.length;
-        }
+        @Override
+        public double fvalue(final int index){return values[index];}
+
+        public int length() {return this.values.length;}
+
+        public void set_value(final int index, final double value){values[index] = value;}
     }
 
 }
