@@ -49,11 +49,11 @@ public class StructuralVariationDiscoveryArgumentCollection implements Serializa
 
         @Argument(doc = "Minimum weight of the corroborating read evidence to validate some single piece of evidence.",
                 fullName = "min-evidence-count")
-        public int minEvidenceWeight = 15;
+        public double minEvidenceWeightPerCoverage = 15.0 / 42.855164;
 
         @Argument(doc = "Minimum weight of the evidence that shares a distal target locus to validate the evidence.",
                 fullName = "min-coherent-evidence-count")
-        public int minCoherentEvidenceWeight = 7;
+        public double minCoherentEvidenceWeightPerCoverage = 7.0 / 42.855164;
 
         @Argument(doc = "Minimum number of localizing kmers in a valid interval.", fullName="min-kmers-per-interval")
         public int minKmersPerInterval = 5;
@@ -173,7 +173,21 @@ public class StructuralVariationDiscoveryArgumentCollection implements Serializa
                 fullName = OUTPUT_ORDER_FULL_NAME,
                 optional = true)
         public SAMFileHeader.SortOrder assembliesSortOrder = SAMFileHeader.SortOrder.coordinate;
+
+        @Argument(doc = "Path to xgboost classifier model file for evidence filtering",
+                fullName = "sv-evidence-filter-model-file", optional=true)
+        public String svEvidenceFilterModelFile = "/large/sv_evidence_classifier.bin";
+
+        @Argument(doc = "Minimum classified probability for a piece of evidence to pass xgboost evidence filter",
+                fullName = "sv-evidence-filter-threshold-probability", optional=true)
+        public double svEvidenceFilterThresholdProbability = 0.016311;
+
+        @Argument(doc = "Filter method for selecting evidence to group into SV Intervals",
+                fullName = "sv-evidence-filter-type", optional=true)
+        public SvEvidenceFilterType svEvidenceFilterType = SvEvidenceFilterType.TWO_THRESHOLD;
     }
+
+    public enum SvEvidenceFilterType {TWO_THRESHOLD, XGBOOST;}
 
     public static class DiscoverVariantsFromContigsAlignmentsSparkArgumentCollection implements Serializable {
         private static final long serialVersionUID = 1L;

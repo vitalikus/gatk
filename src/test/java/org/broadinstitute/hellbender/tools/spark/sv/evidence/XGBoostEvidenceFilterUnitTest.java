@@ -11,7 +11,6 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.broadinstitute.hellbender.GATKBaseTest;
 import org.broadinstitute.hellbender.engine.spark.SparkContextFactory;
 import org.broadinstitute.hellbender.exceptions.GATKException;
-import org.broadinstitute.hellbender.utils.gcs.BucketUtils;
 import org.junit.Assert;
 import org.testng.annotations.Test;
 
@@ -24,7 +23,6 @@ import java.util.Iterator;
 import java.util.Map;
 
 public class XGBoostEvidenceFilterUnitTest extends GATKBaseTest {
-    private final JavaSparkContext ctx = SparkContextFactory.getTestSparkContext();
     private static final String testDataJsonFile = publicTestDir + "sv_classifier_test_data.json";
     private static final String resourceClassifierModelFile = "/large/sv_evidence_classifier.bin";
     private static final String localClassifierModelFile
@@ -34,58 +32,64 @@ public class XGBoostEvidenceFilterUnitTest extends GATKBaseTest {
     private static final boolean useFastMathExp = true;
     private static final double probabilityTol = 1.0e-7;
 
-    @Test(groups = "sv")
-    protected void testXGBoostClassifier() {
-        //test Serial
-        // load classifier and test data
-        final Predictor predictor = loadPredictor(localClassifierModelFile);
-        final ClassifierTestData testData = new ClassifierTestData(testDataJsonFile);
+    private final ClassifierTestData testData = new ClassifierTestData(testDataJsonFile);
+    private final double[] predictYProbaSerial = predictProba(
+            XGBoostEvidenceFilter.loadPredictor(localClassifierModelFile), testData.features
+    );
 
-        // make serial prediction
-        final double[] predictYProbaSerial = predictProba(predictor, testData.features);
+    @Test(groups = "sv")
+    protected void testLocalXGBoostClassifierAccuracy() {
         // check accuracy: predictions are same as testData up to tolerance
         Assert.assertArrayEquals("Probabilities predicted by classifier do not match saved correct answers",
                 predictYProbaSerial, testData.yProba, probabilityTol);
+    }
 
+    @Test(groups = "sv")
+    protected void testLocalXGBoostClassifierSpark() {
+        final Predictor localPredictor = XGBoostEvidenceFilter.loadPredictor(localClassifierModelFile);
+        // get spark ctx
+        final JavaSparkContext ctx = SparkContextFactory.getTestSparkContext();
         // parallelize testData to RDD
         JavaRDD<FVec> testFeaturesRdd = ctx.parallelize(Arrays.asList(testData.features));
         // predict in parallel
         JavaDoubleRDD predictYProbaRdd
-                = testFeaturesRdd.mapToDouble(f ->  predictor.predictSingle(f, false,0));
+                = testFeaturesRdd.mapToDouble(f -> localPredictor.predictSingle(f, false, 0));
         // pull back to local array
         final double[] predictYProbaSpark = predictYProbaRdd.collect()
                 .stream().mapToDouble(Double::doubleValue).toArray();
-        // check parallel is *identical* to serial
+        // check probabilities from spark are identical to serial
         Assert.assertArrayEquals("Probabilities predicted in spark context differ from serial",
                 predictYProbaSpark, predictYProbaSerial, 0.0);
+    }
 
-        // check that loading classifier from resource or GCS works
-        final Predictor resourcePredictor = loadPredictor(resourceClassifierModelFile);
+    @Test(groups = "sv")
+    protected void testResourceXGBoostClassifier() {
+        // load classifier from resource
+        final Predictor resourcePredictor = XGBoostEvidenceFilter.loadPredictor(resourceClassifierModelFile);
         final double[] resourceYProba = predictProba(resourcePredictor, testData.features);
-        Assert.assertArrayEquals("Loading predictor from resource is not identical to local file",
+        // check that predictions from resource are identical to local
+        Assert.assertArrayEquals("Predictions via loading predictor from resource is not identical to local file",
                 resourceYProba, predictYProbaSerial, 0.0);
+    }
 
-        final Predictor gcsPredictor = loadPredictor(gcsClassifierModelFile);
+    @Test(groups = "sv")
+    protected void testGcsXGBoostClassifier() {
+        // loading classifier from GCS
+        final Predictor gcsPredictor = XGBoostEvidenceFilter.loadPredictor(gcsClassifierModelFile);
         final double[] gcsYProba = predictProba(gcsPredictor, testData.features);
-        Assert.assertArrayEquals("Loading predictor from GCS is not identical to local file",
+        // check that predictions from GCS are identical to local
+        Assert.assertArrayEquals("Predictions via loading predictor from GCS is not identical to local file",
                 gcsYProba, predictYProbaSerial, 0.0);
     }
 
-    private Predictor loadPredictor(final String modelFileLocation) {
-        ObjFunction.useFastMathExp(useFastMathExp);
-        try {
-            final InputStream modelStream = modelFileLocation.startsWith("/large/") ?
-                    getClass().getResourceAsStream(modelFileLocation)
-                    : BucketUtils.openFile(modelFileLocation);
-            //return new Predictor(new FileInputStream(classifierModelFile));
-            return new Predictor(modelStream);
-        } catch(IOException e) {
-            throw new GATKException(
-                    "Unable to load predictor from classifier file " + modelFileLocation + ": " + e.getMessage()
-            );
+    private static double[] predictProba(final Predictor predictor, final FVec[] testFeatures) {
+        final int numData = testFeatures.length;
+        final double[] yProba = new double[numData];
+        for(int rowIndex = 0; rowIndex < numData; ++rowIndex) {
+            yProba[rowIndex] = predictor.predictSingle(testFeatures[rowIndex], false,0);
         }
+        return yProba;
     }
-
 
     private static class ClassifierTestData {
         final EvidenceFeatures[] features;
@@ -213,14 +217,5 @@ public class XGBoostEvidenceFilterUnitTest extends GATKBaseTest {
             }
             return data;
         }
-    }
-
-    private static double[] predictProba(final Predictor predictor, final FVec[] testFeatures) {
-        final int numData = testFeatures.length;
-        final double[] yProba = new double[numData];
-        for(int rowIndex = 0; rowIndex < numData; ++rowIndex) {
-            yProba[rowIndex] = predictor.predictSingle(testFeatures[rowIndex], false,0);
-        }
-        return yProba;
     }
 }
