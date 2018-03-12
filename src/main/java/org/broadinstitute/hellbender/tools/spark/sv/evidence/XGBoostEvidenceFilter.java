@@ -144,7 +144,7 @@ public final class XGBoostEvidenceFilter implements Iterator<BreakpointEvidence>
         final double num_overlap = 0.0;
         final double num_coherent = 0.0;
 
-        
+
         return new EvidenceFeatures(new double[]{bases_matched, ref_length, evidence_type, mappingQuality,
                                                  template_size, num_overlap, num_coherent});
     }
