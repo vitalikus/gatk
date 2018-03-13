@@ -36,7 +36,7 @@ public class CNNVariantScoreIntegrationTest extends CommandLineProgramTest {
 
     }
 
-    @Test(groups = {"python"}, enabled = false)
+    @Test(groups = {"python"})
     public void testInferenceResourceModel() throws IOException{
         final ArgumentsBuilder argsBuilder = new ArgumentsBuilder();
         argsBuilder.addArgument(StandardArgumentDefinitions.VARIANT_LONG_NAME, inputVCF)
@@ -109,7 +109,7 @@ public class CNNVariantScoreIntegrationTest extends CommandLineProgramTest {
     /**
      * Run the 2D Model on a small test VCF with the resource loaded architecture.
      */
-    @Test(groups = {"python"}, enabled = false)
+    @Test(groups = {"python"})
     public void testInference2dResourceModel() throws IOException{
         TensorType tt = TensorType.read_tensor;
         final ArgumentsBuilder argsBuilder = new ArgumentsBuilder();
