@@ -11,10 +11,7 @@ import org.testng.SkipException;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -270,5 +267,21 @@ public final class IOUtilsUnitTest extends GATKBaseTest {
         Assert.assertEquals(string, IOUtils.urlDecode(encoded));
     }
 
+    @Test
+    public void testLoadLargeRuntimeResource() throws IOException {
+        final String largeResourcePath = "large/largeResourceTest.txt";
+        final Resource largeResource = new Resource(largeResourcePath, null);
+        final File resourceFile = IOUtils.writeTempResource(largeResource);
+
+        String resourceContents = "";
+        try (final FileReader fr = new FileReader(resourceFile);
+             final BufferedReader br = new BufferedReader(fr)) {
+            resourceContents = br.readLine();
+        }
+        finally {
+            resourceFile.delete();
+        }
+        Assert.assertEquals(resourceContents, "line in large resource file");
+   }
 
 }
