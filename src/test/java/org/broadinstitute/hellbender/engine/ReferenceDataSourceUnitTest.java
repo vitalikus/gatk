@@ -46,7 +46,7 @@ public final class ReferenceDataSourceUnitTest extends GATKBaseTest {
             SAMSequenceDictionary sequenceDictionary = refDataSource.getSequenceDictionary();
             Assert.assertEquals(sequenceDictionary.size(), 4, "Wrong number of sequences in sequence dictionary returned from refDataSource.getSequenceDictionary()");
             for ( String contig : Arrays.asList("1", "2", "3", "4") ) {
-                Assert.assertNotNull(sequenceDictionary.getSequence(contig), "Sequence dictionary returned from refDataSource.getSamFileHeader() lacks expected contig " + contig);
+                Assert.assertNotNull(sequenceDictionary.getSequence(contig), "Sequence dictionary returned from refDataSource.getSequenceDictionary() lacks expected contig " + contig);
             }
         }
     }
