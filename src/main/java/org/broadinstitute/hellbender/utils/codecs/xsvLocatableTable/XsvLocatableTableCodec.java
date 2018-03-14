@@ -66,6 +66,7 @@ public final class XsvLocatableTableCodec extends AsciiFeatureCodec<XsvTableFeat
     // Public Static Members:
 
     private static final String COMMENT_DELIMITER = "#";
+    private static final String SAM_FILE_HEADER_LINE_START = "@";
 
     public static final String CONFIG_FILE_CONTIG_COLUMN_KEY = "contig_column";
     public static final String CONFIG_FILE_START_COLUMN_KEY = "start_column";
@@ -423,9 +424,8 @@ public final class XsvLocatableTableCodec extends AsciiFeatureCodec<XsvTableFeat
             stream.read(buff, 0, SAM_FILE_HEADER_START.length());
             final boolean eq = Arrays.equals(buff, SAM_FILE_HEADER_START.getBytes());
 
-            // TODO: Remove magic constants
             if (eq) {
-                return "@";
+                return SAM_FILE_HEADER_LINE_START;
             } else {
                 return COMMENT_DELIMITER;
             }

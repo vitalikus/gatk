@@ -1,6 +1,7 @@
 package org.broadinstitute.hellbender.utils.io;
 
 import org.apache.commons.io.FileUtils;
+import org.broadinstitute.hellbender.exceptions.GATKException;
 
 import java.io.File;
 import java.io.IOException;
@@ -67,9 +68,6 @@ public final class Resource {
         return inputStream;
     }
 
-
-    // TODO: Test test test
-    // TODO: Is there a better palce for this?
     /**
      *  Given a resource path that is either on the file system or in a jar, return a File.
      *
@@ -81,10 +79,14 @@ public final class Resource {
      */
     public static File getResourceContentsAsFile(final String resourcePath) throws IOException {
         final File tmpResourceFile = File.createTempFile("tmp_read_resource_", ".config");
-        FileUtils.copyInputStreamToFile(ClassLoader.getSystemResourceAsStream(resourcePath),
+        final InputStream systemResourceAsStream = ClassLoader.getSystemResourceAsStream(resourcePath);
+
+        if (systemResourceAsStream == null) {
+            throw new GATKException("Null value when trying to read system resource.  Cannot find: " + resourcePath);
+        }
+
+        FileUtils.copyInputStreamToFile(systemResourceAsStream,
                 tmpResourceFile);
         return tmpResourceFile;
     }
-
-
 }

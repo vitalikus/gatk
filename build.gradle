@@ -262,6 +262,7 @@ processResources {
 processTestResources {
     //Don't waste time packaging unnecessary test data into the test resources:
     include "org/broadinstitute/hellbender/utils/config/*"
+    include "org/broadinstitute/hellbender/utils/io/*"
 }
 
 sourceCompatibility = 1.8
