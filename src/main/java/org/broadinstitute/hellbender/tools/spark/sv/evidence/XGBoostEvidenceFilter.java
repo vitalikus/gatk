@@ -2,20 +2,25 @@ package org.broadinstitute.hellbender.tools.spark.sv.evidence;
 
 import biz.k11i.xgboost.Predictor;
 import biz.k11i.xgboost.learner.ObjFunction;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
+import htsjdk.samtools.CigarElement;
+import htsjdk.samtools.CigarOperator;
+import htsjdk.samtools.TextCigarCodec;
 import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.tools.spark.sv.StructuralVariationDiscoveryArgumentCollection;
 import org.broadinstitute.hellbender.tools.spark.sv.utils.*;
+import org.broadinstitute.hellbender.tools.spark.utils.IntHistogram;
 import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.gcs.BucketUtils;
 import scala.Tuple2;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.NoSuchElementException;
+import java.io.InputStreamReader;
+import java.util.*;
 
 /**
  * A class that acts as a filter for breakpoint evidence.
@@ -23,47 +28,78 @@ import java.util.NoSuchElementException;
  */
 public final class XGBoostEvidenceFilter implements Iterator<BreakpointEvidence> {
     static private final boolean useFastMathExp = true;
+    static private final boolean useClusterNumCoherent = false;
     private final ReadMetadata readMetadata;
     private final PartitionCrossingChecker partitionCrossingChecker;
 
     private final Predictor predictor;
+    private final Map<String, Integer> evidenceTypeMap;
     private final double coverage;
     private final int minEvidenceMapQ;
     private final double thresholdProbability;
+    private final Map<String, LibraryStatistics> libraryStatisticsMap;
 
     private final SVIntervalTree<List<BreakpointEvidence>> evidenceTree;
 
     private Iterator<SVIntervalTree.Entry<List<BreakpointEvidence>>> treeItr;
     private Iterator<BreakpointEvidence> listItr;
 
-    public XGBoostEvidenceFilter(final Iterator<BreakpointEvidence> evidenceItr,
-                                 final ReadMetadata readMetadata,
-                                 final StructuralVariationDiscoveryArgumentCollection.FindBreakpointEvidenceSparkArgumentCollection params,
-                                 final PartitionCrossingChecker partitionCrossingChecker) {
+    public XGBoostEvidenceFilter(
+            final Iterator<BreakpointEvidence> evidenceItr,
+            final ReadMetadata readMetadata,
+            final StructuralVariationDiscoveryArgumentCollection.FindBreakpointEvidenceSparkArgumentCollection params,
+            final PartitionCrossingChecker partitionCrossingChecker
+    ) {
         this.predictor = loadPredictor(params.svEvidenceFilterModelFile);
+        this.evidenceTypeMap = loadEvidenceTypeMap(params.svCategoricalVariablesFile);
         this.readMetadata = readMetadata;
         this.partitionCrossingChecker = partitionCrossingChecker;
         this.coverage = readMetadata.getCoverage();
         this.minEvidenceMapQ = params.minEvidenceMapQ;
         this.thresholdProbability = params.svEvidenceFilterThresholdProbability;
-
+        this.libraryStatisticsMap = readMetadata.getAllLibraryStatistics();
 
         this.evidenceTree = buildTree(evidenceItr);
         this.treeItr = evidenceTree.iterator();
         this.listItr = null;
     }
 
+
+    private static InputStream getInputStream(final String fileLocation) {
+        return fileLocation.startsWith("gatk-resources::") ?
+                XGBoostEvidenceFilter.class.getResourceAsStream(fileLocation.substring(16))
+                : BucketUtils.openFile(fileLocation);
+    }
+
     public static Predictor loadPredictor(final String modelFileLocation) {
         ObjFunction.useFastMathExp(useFastMathExp);
-        try {
-            final InputStream modelStream = modelFileLocation.startsWith("/large/") ?
-                    XGBoostEvidenceFilter.class.getResourceAsStream(modelFileLocation)
-                    : BucketUtils.openFile(modelFileLocation);
-            //return new Predictor(new FileInputStream(classifierModelFile));
-            return new Predictor(modelStream);
+        try(final InputStream inputStream = getInputStream(modelFileLocation)) {
+            return new Predictor(inputStream);
         } catch(IOException e) {
             throw new GATKException(
                     "Unable to load predictor from classifier file " + modelFileLocation + ": " + e.getMessage()
+            );
+        }
+    }
+
+    @VisibleForTesting
+    static Map<String, Integer> loadEvidenceTypeMap(final String evidenceTypeMapFileLocation) {
+        try(final InputStream inputStream = getInputStream(evidenceTypeMapFileLocation)) {
+            final JsonNode testDataNode = new ObjectMapper().readTree(inputStream);
+            final JsonNode evidenceTypeArrayNode = testDataNode.get("evidence_type");
+            if(!evidenceTypeArrayNode.isArray()) {
+                throw new IllegalArgumentException("evidenceTypeNode does not encode a valid array");
+            }
+            final HashMap<String, Integer> evidenceTypeMap = new HashMap<>();
+            int index = 0;
+            for(final JsonNode evidenceTypeNode : evidenceTypeArrayNode) {
+                evidenceTypeMap.put(evidenceTypeNode.asText(), index);
+                ++index;
+            }
+            return evidenceTypeMap;
+        } catch(IOException e) {
+            throw new GATKException(
+                    "Unable to load evidence-type map from file " + evidenceTypeMapFileLocation + ": " + e.getMessage()
             );
         }
     }
@@ -132,21 +168,17 @@ public final class XGBoostEvidenceFilter implements Iterator<BreakpointEvidence>
     @VisibleForTesting
     EvidenceFeatures getFeatures(final BreakpointEvidence evidence) {
         // create new struct for these two, use CigarOperator to update if instanceof ReadEvidence
-        final double bases_matched = 0.0;
-        final double ref_length = 0.0;
-        // need to find map from evidence_type to integer codes!!!
-        final double evidence_type = 0.0;
+        final CigarQualityInfo cigarQualityInfo = new CigarQualityInfo(evidence);
+        final double evidenceType = evidenceTypeMap.get(evidence.getClass().getSimpleName());
         final double mappingQuality = getMappingQuality(evidence);
-        // should be similar strategegy to getMappingQuality, except store read_count if not ReadEvidence, and assert
-        // it's a TemplateSizeAnomaly
-        final double template_size = 0.0;
+        final double templateSize = getTemplateSize(evidence);
         // calculate these similar to BreakpointDensityFilter, but always calculate full totals, never end early.
-        final double num_overlap = 0.0;
-        final double num_coherent = 0.0;
+        final CoverageScaledOverlapInfo overlapInfo
+                = useClusterNumCoherent ? getClusterOverlapInfo(evidence) : getIndividualOverlapInfo(evidence);
 
-
-        return new EvidenceFeatures(new double[]{bases_matched, ref_length, evidence_type, mappingQuality,
-                                                 template_size, num_overlap, num_coherent});
+        return new EvidenceFeatures(new double[]{cigarQualityInfo.basesMatched, cigarQualityInfo.referenceLength,
+                                                 evidenceType, mappingQuality, templateSize,
+                                                 overlapInfo.numOverlap, overlapInfo.numCoherent});
     }
 
     private double getMappingQuality(final BreakpointEvidence evidence) {
@@ -154,48 +186,107 @@ public final class XGBoostEvidenceFilter implements Iterator<BreakpointEvidence>
             ((BreakpointEvidence.ReadEvidence) evidence).getMappingQuality() : 0.0;
     }
 
+    private double getTemplateSize(final BreakpointEvidence evidence) {
+        if(evidence instanceof BreakpointEvidence.ReadEvidence) {
+            // For ReadEvidence, return templateSize as percentile of library's cumulative density function:
+            final IntHistogram.CDF templateSizeCDF = libraryStatisticsMap.get(
+                    ((BreakpointEvidence.ReadEvidence) evidence).getReadGroup()
+            ).getCDF();
+            return templateSizeCDF.getFraction(((BreakpointEvidence.ReadEvidence) evidence).getTemplateSize());
+        } else if(evidence instanceof BreakpointEvidence.TemplateSizeAnomaly) {
+            // For TemplateSizeAnomaly, return readCount scaled by coverage
+            return (double)(((BreakpointEvidence.TemplateSizeAnomaly) evidence).getReadCount()) / coverage;
+        } else {
+            throw new IllegalArgumentException(
+                    "templateSize feature only defined for ReadEvidence and TemplateSizeAnomaly"
+            );
+        }
+    }
 
-
-
-
-    @VisibleForTesting boolean hasEnoughOverlappers( final SVInterval interval ) {
+    private CoverageScaledOverlapInfo getClusterOverlapInfo(final BreakpointEvidence evidence) {
+        final SVInterval interval = evidence.getLocation();
         final Iterator<SVIntervalTree.Entry<List<BreakpointEvidence>>> itr = evidenceTree.overlappers(interval);
         PairedStrandedIntervalTree<BreakpointEvidence> targetIntervalTree = new PairedStrandedIntervalTree<>();
-        int weight = 0;
-        while ( itr.hasNext() ) {
-            final List<BreakpointEvidence> evidenceForInterval = itr.next().getValue();
-            weight += evidenceForInterval.stream().mapToInt(BreakpointEvidence::getWeight).sum();
-            if ( weight >= minEvidenceWeight) {
-                return true;
-            }
+        int numOverlap = -1; // correct for fact that evidence will overlap with itself
+        int numCoherent = 0;
 
-            for (final BreakpointEvidence evidence : evidenceForInterval) {
-                if (evidence.hasDistalTargets(readMetadata, minEvidenceMapQ)) {
-                    final List<StrandedInterval> distalTargets = evidence.getDistalTargets(readMetadata, minEvidenceMapQ);
+        while (itr.hasNext()) {
+            final List<BreakpointEvidence> evidenceForInterval = itr.next().getValue();
+            numOverlap += evidenceForInterval.size();
+            // store any overlappers with distal targets in PairStrandedIntervalTree
+            for (final BreakpointEvidence overlapper : evidenceForInterval) {
+                if (overlapper.hasDistalTargets(readMetadata, minEvidenceMapQ)) {
+                    final List<StrandedInterval> distalTargets = overlapper.getDistalTargets(readMetadata, minEvidenceMapQ);
                     for (int i = 0; i < distalTargets.size(); i++) {
                         targetIntervalTree.put(
                                 new PairedStrandedIntervals(
-                                        new StrandedInterval(evidence.getLocation(), evidence.isEvidenceUpstreamOfBreakpoint()),
+                                        new StrandedInterval(overlapper.getLocation(), overlapper.isEvidenceUpstreamOfBreakpoint()),
                                         distalTargets.get(i)),
-                                evidence
-                                );
+                                overlapper
+                        );
                     }
                 }
             }
         }
 
+        // Find maximal numCoherent of any BreakpointEvidence in PairStrandedIntervalTree
         final Iterator<Tuple2<PairedStrandedIntervals, BreakpointEvidence>> targetLinkIterator = targetIntervalTree.iterator();
         while (targetLinkIterator.hasNext()) {
             Tuple2<PairedStrandedIntervals, BreakpointEvidence> next = targetLinkIterator.next();
-            final int coherentEvidenceWeight = (int) Utils.stream(targetIntervalTree.overlappers(next._1())).count();
-            if (coherentEvidenceWeight >= minCoherentEvidenceWeight) {
-                return true;
+            // subtract 1 to offset for coherence with self
+            final int targetNumCoherent = (int) Utils.stream(targetIntervalTree.overlappers(next._1())).count() - 1;
+            if (targetNumCoherent > numCoherent) {
+                numCoherent = targetNumCoherent;
             }
-
         }
 
-        return false;
+        return new CoverageScaledOverlapInfo(numOverlap, numCoherent, coverage);
     }
+
+
+    private CoverageScaledOverlapInfo getIndividualOverlapInfo(final BreakpointEvidence evidence) {
+        final SVInterval interval = evidence.getLocation();
+        final Iterator<SVIntervalTree.Entry<List<BreakpointEvidence>>> itr = evidenceTree.overlappers(interval);
+        int numOverlap = -1; // correct for fact that evidence will overlap with itself
+        int numCoherent;
+        if (!evidence.hasDistalTargets(readMetadata, minEvidenceMapQ)) {
+            numCoherent = 0;
+            while (itr.hasNext()) {
+                numOverlap += itr.next().getValue().size();
+            }
+            return new CoverageScaledOverlapInfo(numOverlap, numCoherent, coverage);
+        }
+
+        numCoherent = -1; // correct for fact that evidence will cohere with itself
+        final boolean strand = evidence.isEvidenceUpstreamOfBreakpoint();
+        List<StrandedInterval> distalTargets = evidence.getDistalTargets(readMetadata, minEvidenceMapQ);
+        PairedStrandedIntervalTree<BreakpointEvidence> targetIntervalTree = new PairedStrandedIntervalTree<>();
+
+        while (itr.hasNext()) {
+            final List<BreakpointEvidence> evidenceForInterval = itr.next().getValue();
+            numOverlap += evidenceForInterval.size();
+
+            for (final BreakpointEvidence overlapper : evidenceForInterval) {
+                if (overlapper.isEvidenceUpstreamOfBreakpoint() != strand
+                        || !overlapper.hasDistalTargets(readMetadata, minEvidenceMapQ)) {
+                    continue;
+                }
+                final List<StrandedInterval> overlapperDistalTargets
+                        = overlapper.getDistalTargets(readMetadata, minEvidenceMapQ);
+                for (final StrandedInterval distalTarget : distalTargets) {
+                    for (final StrandedInterval overlapperDistalTarget : overlapperDistalTargets) {
+                        if (distalTarget.getStrand() == overlapperDistalTarget.getStrand()
+                                && distalTarget.getInterval().overlaps(overlapperDistalTarget.getInterval())) {
+                            numCoherent += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        return new CoverageScaledOverlapInfo(numOverlap, numCoherent, coverage);
+    }
+
 
     private static <T> void addToTree( final SVIntervalTree<List<T>> tree,
                                    final SVInterval interval,
@@ -207,6 +298,40 @@ public final class XGBoostEvidenceFilter implements Iterator<BreakpointEvidence>
             final List<T> valueList = new ArrayList<>(1);
             valueList.add(value);
             tree.put(interval, valueList);
+        }
+    }
+
+    private static class CoverageScaledOverlapInfo {
+        final double numOverlap;
+        final double numCoherent;
+
+        CoverageScaledOverlapInfo(final int numOverlap, final int numCoherent, final double coverage) {
+            this.numOverlap = ((double)numOverlap) / coverage;
+            this.numCoherent = ((double)numCoherent) / coverage;
+        }
+    }
+
+    private static class CigarQualityInfo {
+        final int basesMatched;
+        final int referenceLength;
+
+        CigarQualityInfo(final BreakpointEvidence evidence) {
+            int numMatched = 0;
+            int refLength = 0;
+            if(evidence instanceof BreakpointEvidence.ReadEvidence) {
+                final String cigarString = ((BreakpointEvidence.ReadEvidence) evidence).getCigarString();
+                for (final CigarElement element : TextCigarCodec.decode(cigarString).getCigarElements()) {
+                    final CigarOperator op = element.getOperator();
+                    if (op.consumesReferenceBases()) {
+                        refLength += element.getLength();
+                        if (op.consumesReadBases()) {
+                            numMatched += element.getLength();
+                        }
+                    }
+                }
+            }
+            basesMatched = numMatched;
+            referenceLength = refLength;
         }
     }
 }

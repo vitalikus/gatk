@@ -24,12 +24,12 @@ import java.util.Map;
 
 public class XGBoostEvidenceFilterUnitTest extends GATKBaseTest {
     private static final String testDataJsonFile = publicTestDir + "sv_classifier_test_data.json";
-    private static final String resourceClassifierModelFile = "/large/sv_evidence_classifier.bin";
+    private static final String classifierModelFile = "/large/sv_evidence_classifier.bin";
+    private static final String resourceClassifierModelFile = "gatk-resources::" + classifierModelFile;
     private static final String localClassifierModelFile
-            = new File(publicMainResourcesDir, resourceClassifierModelFile).getAbsolutePath();
+            = new File(publicMainResourcesDir, classifierModelFile).getAbsolutePath();
     private static final String gcsClassifierModelFile
             = "gs://broad-dsde-methods/sv/reference/GRCh38/sv_evidence_classifier.bin";
-    private static final boolean useFastMathExp = true;
     private static final double probabilityTol = 1.0e-7;
 
     private final ClassifierTestData testData = new ClassifierTestData(testDataJsonFile);
@@ -72,16 +72,6 @@ public class XGBoostEvidenceFilterUnitTest extends GATKBaseTest {
                 resourceYProba, predictYProbaSerial, 0.0);
     }
 
-    @Test(groups = "sv")
-    protected void testGcsXGBoostClassifier() {
-        // loading classifier from GCS
-        final Predictor gcsPredictor = XGBoostEvidenceFilter.loadPredictor(gcsClassifierModelFile);
-        final double[] gcsYProba = predictProba(gcsPredictor, testData.features);
-        // check that predictions from GCS are identical to local
-        Assert.assertArrayEquals("Predictions via loading predictor from GCS is not identical to local file",
-                gcsYProba, predictYProbaSerial, 0.0);
-    }
-
     private static double[] predictProba(final Predictor predictor, final FVec[] testFeatures) {
         final int numData = testFeatures.length;
         final double[] yProba = new double[numData];
@@ -96,8 +86,8 @@ public class XGBoostEvidenceFilterUnitTest extends GATKBaseTest {
         final double[] yProba;
 
         ClassifierTestData(final String jsonFileName) {
-            try {
-                JsonNode testDataNode = new ObjectMapper().readTree(new FileInputStream(jsonFileName));
+            try(final InputStream inputStream = new FileInputStream(jsonFileName)) {
+                final JsonNode testDataNode = new ObjectMapper().readTree(inputStream);
                 features = getFVecArrayFromJsonNode(testDataNode.get("X"));
                 yProba = getDoubleArrayFromJsonNode(testDataNode.get("y_proba"));
             } catch(Exception e) {

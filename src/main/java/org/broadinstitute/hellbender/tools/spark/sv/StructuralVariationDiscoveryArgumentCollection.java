@@ -176,7 +176,11 @@ public class StructuralVariationDiscoveryArgumentCollection implements Serializa
 
         @Argument(doc = "Path to xgboost classifier model file for evidence filtering",
                 fullName = "sv-evidence-filter-model-file", optional=true)
-        public String svEvidenceFilterModelFile = "/large/sv_evidence_classifier.bin";
+        public String svEvidenceFilterModelFile = "gatk-resources::/large/sv_evidence_classifier.bin";
+
+        @Argument(doc = "Path to file specifying encoding of categorical variables",
+                fullName = "sv-evidence-categorical-variables-file", optional=true)
+        public String svCategoricalVariablesFile = "gatk-resources::/large/sv_evidence_categorical_variables.json";
 
         @Argument(doc = "Minimum classified probability for a piece of evidence to pass xgboost evidence filter",
                 fullName = "sv-evidence-filter-threshold-probability", optional=true)

@@ -206,6 +206,8 @@ public class BreakpointEvidence {
                 return new TemplateSizeAnomaly(kryo, input);
             }
         }
+
+        public int getReadCount() {return readCount;}
     }
 
     @DefaultSerializer(ReadEvidence.Serializer.class)
@@ -217,6 +219,7 @@ public class BreakpointEvidence {
         private final String cigarString;
         private final int mappingQuality;
         private final int templateSize;
+        private final String readGroup;
 
         /**
          * evidence offset and width is set to "the rest of the fragment" not covered by this read
@@ -230,6 +233,7 @@ public class BreakpointEvidence {
             this.cigarString = read.getCigar().toString();
             this.mappingQuality = read.getMappingQuality();
             this.templateSize = read.getFragmentLength();
+            this.readGroup = read.getReadGroup();
         }
 
         /**
@@ -246,13 +250,14 @@ public class BreakpointEvidence {
             this.cigarString = read.getCigar().toString();
             this.mappingQuality = read.getMappingQuality();
             this.templateSize = read.getFragmentLength();
+            this.readGroup = read.getReadGroup();
         }
 
         @VisibleForTesting ReadEvidence( final SVInterval interval, final int weight,
                                          final String templateName, final TemplateFragmentOrdinal fragmentOrdinal,
                                          final boolean validated, final boolean forwardStrand,
                                          final String cigarString, final int mappingQuality,
-                                         final int templateSize) {
+                                         final int templateSize, final String readGroup) {
             super(interval, weight, validated);
             this.templateName = templateName;
             this.fragmentOrdinal = fragmentOrdinal;
@@ -260,6 +265,7 @@ public class BreakpointEvidence {
             this.cigarString = cigarString;
             this.mappingQuality = mappingQuality;
             this.templateSize = templateSize;
+            this.readGroup = readGroup;
         }
 
         /**
@@ -275,6 +281,7 @@ public class BreakpointEvidence {
             this.cigarString = input.readString();
             this.mappingQuality = input.readInt();
             this.templateSize = input.readInt();
+            this.readGroup = input.readString();
         }
 
         @Override
@@ -286,6 +293,7 @@ public class BreakpointEvidence {
             output.writeString(cigarString);
             output.writeInt(mappingQuality);
             output.writeInt(templateSize);
+            output.writeString(readGroup);
         }
 
         public String getTemplateName() {
@@ -301,6 +309,8 @@ public class BreakpointEvidence {
         public int getMappingQuality() { return mappingQuality; }
 
         public int getTemplateSize() { return templateSize; }
+
+        public String getReadGroup() { return readGroup; }
 
         @Override
         public Boolean isEvidenceUpstreamOfBreakpoint() {
