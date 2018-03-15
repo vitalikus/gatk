@@ -38,6 +38,41 @@ startScripts {
     }
 }
 
+final String buildPrerequisitesErrorFormatString = "%s See https://github.com/broadinstitute/gatk#building for information on how to build GATK."
+
+// Large runtime resource files must be present at build time to be compiled into the jar, so validate
+// that the lfs files have been fetched and that the directory does not contain the git-lfs pointer files
+def validateLargeResourceFile(final File largeResourceFile, buildPrerequisitesErrorFormatString) {
+    largeResourceFile.withReader("UTF-8") { reader ->
+        final String firstLine = reader.readLine();
+        if (firstLine != null && firstLine.startsWith("version https://git-lfs.github.com/spec/v1")) {
+            throw new RuntimeException(
+                    String.format(buildPrerequisitesErrorFormatString,
+                            String.format(
+                                    "%s appears to be a git-lfs pointer file. The resource files in src/main/resources/large must be downloaded using git-lfs.",
+                                    largeResourceFile)
+                    )
+            );
+        }
+    }
+}
+
+// Validate that we have a clone of the repository and that any required git-lfs files have been resolved
+task validateBuildPrerequisites {
+    if (ToolProvider.getSystemToolClassLoader() == null) {
+        throw new RuntimeException(
+                String.format(buildPrerequisitesErrorFormatString, "A (version 8) JDK must be installed."));
+    }
+    if (!file(".git").isDirectory()) {
+        throw new RuntimeException(
+                String.format(buildPrerequisitesErrorFormatString,
+                        "The GATK Github repository must be cloned to run the build."));
+    }
+    // Next, ensure that the git-lfs files required to run the build are present
+    final FileTree largeResources = fileTree(dir: "src/main/resources/large")
+    largeResources.forEach {f -> validateLargeResourceFile(f, buildPrerequisitesErrorFormatString)};
+}
+
 task downloadGsaLibFile(type: Download) {
     src 'http://cran.r-project.org/src/contrib/gsalib_2.1.tar.gz'
     dest "src/main/resources/org/broadinstitute/hellbender/utils/R/gsalib.tar.gz"

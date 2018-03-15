@@ -55,6 +55,8 @@ releases of the toolkit.
 * Optional, but recommended:
     * Gradle 3.1 or greater, needed for building the GATK. We recommend using the `./gradlew` script which will
       download and use an appropriate gradle version automatically (see examples below).
+    * [git-lfs](https://git-lfs.github.com/) 1.1.0 or greater, needed for building the GATK. Used to download the large files required to run the build and to run the test suite.
+      Run `git lfs install` after downloading, followed by `git lfs pull` from the root of your git clone to download the large files. The download is several hundred megabytes.
     * Python 2.6 or greater (needed for running the `gatk` frontend script)
     * Python 3.6.2, along with a set of additional Python packages, are required to run some tools and workflows.
       GATK uses the [Conda](https://conda.io/docs/index.html) package manager to
@@ -69,8 +71,6 @@ releases of the toolkit.
       [Conda](https://conda.io/docs/user-guide/tasks/manage-environments.html) documentation for
       additional information about using and managing Conda environments.
     * R 3.2.5 (needed for producing plots in certain tools, and for running the test suite)
-    * [git-lfs](https://git-lfs.github.com/) 1.1.0 or greater (needed to download large files for the complete test suite).
-      Run `git lfs install` after downloading, followed by `git lfs pull` from the root of your git clone to download the large files. The download is several hundred megabytes.
 * Alternatively, pre-packaged images with all needed dependencies installed can be found on [our dockerhub repository](https://hub.docker.com/r/broadinstitute/gatk/). This requires a recent version of the docker client, which can be found on the [docker website](https://www.docker.com/get-docker).
 
 ## <a name="quickstart">Quick Start Guide</a>
@@ -102,7 +102,7 @@ You can download and run pre-built versions of GATK4 from the following places:
         
     * This creates a zip archive in the `build/` directory with a name like `gatk-VERSION.zip` containing a complete standalone GATK distribution, including our launcher `gatk`, both the local and spark jars, and this README.    
     * You can also run GATK commands directly from the root of your git clone after running this command.
-    * Note that you *must* have a full git clone in order to build GATK. The zipped source code alone is not buildable.
+    * Note that you *must* have a full git clone in order to build GATK, incuding git-lfs files. The zipped source code alone is not buildable.
 
 * **Other ways to build:**
     * `./gradlew installDist`  
