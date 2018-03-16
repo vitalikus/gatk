@@ -5,15 +5,19 @@ import com.esotericsoftware.kryo.Kryo;
 import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
 import com.google.common.annotations.VisibleForTesting;
+import com.sun.javaws.exceptions.InvalidArgumentException;
 import htsjdk.samtools.Cigar;
+import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.TextCigarCodec;
 import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.tools.spark.sv.utils.SVInterval;
+import org.broadinstitute.hellbender.tools.spark.sv.utils.Strand;
 import org.broadinstitute.hellbender.tools.spark.sv.utils.StrandedInterval;
 import org.broadinstitute.hellbender.tools.spark.sv.utils.TextMDCodec;
 import org.broadinstitute.hellbender.utils.read.GATKRead;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -99,6 +103,77 @@ public class BreakpointEvidence {
                     .collect(Collectors.joining(";"))
                 : "";
         return location.toString() + "\t" + weight + "\t" + this.getClass().getSimpleName() + "\t" + dtString;
+    }
+
+    @VisibleForTesting
+    static BreakpointEvidence fromStringRep(final String strRep) {
+        final String[] words = strRep.split("\t");
+
+        final SVInterval location = locationFromStringRep(words[0]).getInterval();
+
+        final int weight = Integer.parseInt(words[1]);
+
+        final String evidenceType = words[2];
+        if(evidenceType.equals("TemplateSizeAnomaly")) {
+            final int readCount = Integer.parseInt(words[3]);
+            return new TemplateSizeAnomaly(location, weight, readCount);
+        } else {
+            final List<StrandedInterval> distalTargets = Arrays.stream(words[3].split(";"))
+                    .map(BreakpointEvidence::locationFromStringRep).collect(Collectors.toList());
+            if(distalTargets.size() > 1) {
+                throw new IllegalArgumentException("BreakpointEvidence must have 0 or 1 distal targets");
+            }
+            final String[] templateParts = words[4].split("/");
+            final String templateName = templateParts[0];
+            final TemplateFragmentOrdinal fragmentOrdinal = new TemplateFragmentOrdinal(
+                    templateParts.length > 1 ? "/" + templateParts[1] : ""
+            );
+            final boolean forwardStrand = words[5].equals("1");
+            final int templateSize = Integer.parseInt(words[6]);
+            final String cigarString = words[7];
+            final int mappingQuality = Integer.parseInt(words[8]);
+            final String readGroup = "Pond-Testing"; // for now, just fake this, only for testing.
+            final boolean validated = false;
+            switch(evidenceType) {
+                case "SplitRead":
+                    return new SplitRead(location, weight, templateName, fragmentOrdinal, validated,
+                            forwardStrand, cigarString, mappingQuality, templateSize, readGroup, distalTargets);
+                case "LargeIndel":
+                    return new LargeIndel(location, weight, templateName, fragmentOrdinal, validated,
+                            forwardStrand, cigarString, mappingQuality, templateSize, readGroup, distalTargets);
+
+                case "MateUnmapped":
+                    return new MateUnmapped(location, weight, templateName, fragmentOrdinal, validated,
+                            forwardStrand, cigarString, mappingQuality, templateSize, readGroup, distalTargets);
+
+                case "InterContigPair":
+                    return new InterContigPair(location, weight, templateName, fragmentOrdinal, validated,
+                            forwardStrand, cigarString, mappingQuality, templateSize, readGroup, distalTargets);
+
+                case "OutiesPair":
+                    return new OutiesPair(location, weight, templateName, fragmentOrdinal, validated,
+                            forwardStrand, cigarString, mappingQuality, templateSize, readGroup, distalTargets);
+
+                case "SameStrandPair":
+                    return new SameStrandPair(location, weight, templateName, fragmentOrdinal, validated,
+                            forwardStrand, cigarString, mappingQuality, templateSize, readGroup, distalTargets);
+
+                case "WeirdTemplateSize":
+                    return new WeirdTemplateSize(location, weight, templateName, fragmentOrdinal, validated,
+                            forwardStrand, cigarString, mappingQuality, templateSize, readGroup, distalTargets);
+                default:
+                    throw new IllegalArgumentException("Unknown BreakpointEvidence type: " + evidenceType);
+            }
+        }
+    }
+
+    private static StrandedInterval locationFromStringRep(final String locationStr) {
+        final String[] locationParts = locationStr.split("[\\[\\]:]");
+        final int contig = Integer.parseInt(locationParts[0]);
+        final int start = Integer.parseInt(locationParts[1]);
+        final int end = Integer.parseInt(locationParts[2]);
+        final boolean strand = locationParts.length == 4 && locationParts[3].equals("1");
+        return new StrandedInterval(new SVInterval(contig, start, end), strand);
     }
 
     //* slicing equality -- just tests for equal fields */
@@ -296,6 +371,8 @@ public class BreakpointEvidence {
             output.writeString(readGroup);
         }
 
+        public boolean getForwardStrand() { return forwardStrand; }
+
         public String getTemplateName() {
             return templateName;
         }
@@ -396,9 +473,7 @@ public class BreakpointEvidence {
         private static final int UNCERTAINTY = 3;
         private static final String SA_TAG_NAME = "SA";
         private static final int SPLIT_READ_WEIGHT = ReadEvidence.SINGLE_READ_WEIGHT;
-        private final String cigar;
         private final String tagSA;
-        private final boolean primaryAlignmentForwardStrand;
         private boolean primaryAlignmentClippedAtStart;
         private final List<SAMapping> saMappings;
 
@@ -406,9 +481,8 @@ public class BreakpointEvidence {
             // todo: if reads have multiple SA tags.. we should have two pieces of evidence with the right strands
             super(read, metadata, primaryAlignmentClippedAtAlignmentStart ? read.getStart() : read.getEnd(),
                   UNCERTAINTY, !primaryAlignmentClippedAtAlignmentStart, SPLIT_READ_WEIGHT);
-            cigar = read.getCigar().toString();
-            this.primaryAlignmentForwardStrand = !read.isReverseStrand();
-            if ( cigar.isEmpty() ) throw new GATKException("Read has no cigar string.");
+            if ( getCigarString() == null || getCigarString().isEmpty() )
+                throw new GATKException("Read has no cigar string.");
             this.primaryAlignmentClippedAtStart = primaryAlignmentClippedAtAlignmentStart;
             if (read.hasAttribute(SA_TAG_NAME)) {
                 tagSA = read.getAttributeAsString(SA_TAG_NAME);
@@ -420,25 +494,44 @@ public class BreakpointEvidence {
 
         private SplitRead( final Kryo kryo, final Input input ) {
             super(kryo, input);
-            cigar = input.readString();
             tagSA = input.readString();
-            primaryAlignmentForwardStrand = input.readBoolean();
             primaryAlignmentClippedAtStart = input.readBoolean();
             saMappings = parseSATag(tagSA);
+        }
+
+        private SplitRead(final SVInterval interval, final int weight,
+                           final String templateName, final TemplateFragmentOrdinal fragmentOrdinal,
+                           final boolean validated, final boolean forwardStrand,
+                           final String cigarString, final int mappingQuality,
+                           final int templateSize, final String readGroup,
+                           final List<StrandedInterval> distalTargets) {
+            super(interval, weight, templateName, fragmentOrdinal, validated, forwardStrand, cigarString,
+                    mappingQuality, templateSize, readGroup);
+            // MUST CONSTRUCT:
+            /*
+            saMappings can be constructed from list of distalTargets (set mapQ to maxInt, mismatches to 0)
+            tagSA can be constructed by joining saMapings with ';'
+            private final String tagSA;
+            private final List<SAMapping> saMappings;
+            */
+            // This can't work (must add to stringRep() and export / import).
+            primaryAlignmentClippedAtStart = ReadClassifier.hasInitialSoftClip(cigarElements, read);
+            final Cigar cigar = TextCigarCodec.decode(cigarString);
+            final List<CigarElement> cigarElements = cigar.getCigarElements();
+
+
         }
 
         @Override
         protected void serialize( final Kryo kryo, final Output output ) {
             super.serialize(kryo, output);
-            output.writeString(cigar);
             output.writeString(tagSA);
-            output.writeBoolean(primaryAlignmentForwardStrand);
             output.writeBoolean(primaryAlignmentClippedAtStart);
         }
 
         @Override
         public String toString() {
-            return super.toString()+"\tSplit\t"+cigar+"\t"+(tagSA == null ? " SA: None" : (" SA: " + tagSA));
+            return super.toString()+"\tSplit\t"+getCigarString()+"\t"+(tagSA == null ? " SA: None" : (" SA: " + tagSA));
         }
 
         private List<SAMapping> parseSATag(final String tagSA) {
@@ -480,7 +573,7 @@ public class BreakpointEvidence {
                 for (final SAMapping mapping : saMappings) {
                     final int mapQ = mapping.getMapq();
                     SVInterval saInterval = saMappingToSVInterval(readMetadata, mapping,
-                            calculateDistalTargetStrand(mapping, !primaryAlignmentClippedAtStart, primaryAlignmentForwardStrand));
+                            calculateDistalTargetStrand(mapping, !primaryAlignmentClippedAtStart, getForwardStrand()));
                     if (isHighQualityMapping(readMetadata, mapQ, saInterval, minEvidenceMapq)) {
                         hqMappingFound = true;
                         break;
@@ -525,11 +618,11 @@ public class BreakpointEvidence {
                 for (final SAMapping saMapping : saMappings) {
                     final int mapQ = saMapping.getMapq();
                     final SVInterval saInterval = saMappingToSVInterval(readMetadata, saMapping,
-                            calculateDistalTargetStrand(saMapping, !primaryAlignmentClippedAtStart, primaryAlignmentForwardStrand));
+                            calculateDistalTargetStrand(saMapping, !primaryAlignmentClippedAtStart, getForwardStrand()));
                     if (! isHighQualityMapping(readMetadata, mapQ, saInterval, minEvidenceMapq)) {
                         continue;
                     }
-                    final boolean strand = calculateDistalTargetStrand(saMapping, !primaryAlignmentClippedAtStart, primaryAlignmentForwardStrand);
+                    final boolean strand = calculateDistalTargetStrand(saMapping, !primaryAlignmentClippedAtStart, getForwardStrand());
                     supplementaryAlignments.add(new StrandedInterval(saInterval, strand));
                 }
                 return supplementaryAlignments;
@@ -625,30 +718,36 @@ public class BreakpointEvidence {
     @DefaultSerializer(LargeIndel.Serializer.class)
     public static final class LargeIndel extends ReadEvidence {
         private static final int UNCERTAINTY = 4;
-        private final String cigar;
         private static final int LARGE_INDEL_WEIGHT = ReadEvidence.SINGLE_READ_WEIGHT;
 
         LargeIndel( final GATKRead read, final ReadMetadata metadata, final int contigOffset ) {
             super(read, metadata, contigOffset, UNCERTAINTY, true, LARGE_INDEL_WEIGHT);
-            cigar = read.getCigar().toString();
-            if ( cigar == null ) throw new GATKException("Read has no cigar string.");
+            if ( getCigarString() == null || getCigarString().isEmpty() )
+                throw new GATKException("Read has no cigar string.");
         }
 
         private LargeIndel( final Kryo kryo, final Input input ) {
             super(kryo, input);
-            cigar = input.readString();
+        }
+
+        private LargeIndel(final SVInterval interval, final int weight,
+                             final String templateName, final TemplateFragmentOrdinal fragmentOrdinal,
+                             final boolean validated, final boolean forwardStrand,
+                             final String cigarString, final int mappingQuality,
+                             final int templateSize, final String readGroup,
+                             final List<StrandedInterval> distalTargets) {
+            super(interval, weight, templateName, fragmentOrdinal, validated, forwardStrand, cigarString,
+                    mappingQuality, templateSize, readGroup);
+            // note: passing distalTargets to have uniform testing interface to create BreakpointEvidence
         }
 
         @Override
         protected void serialize( final Kryo kryo, final Output output ) {
             super.serialize(kryo, output);
-            output.writeString(cigar);
         }
 
         @Override
-        public String toString() {
-            return super.toString() + "\tIndel\t" + cigar;
-        }
+        public String toString() {return super.toString() + "\tIndel\t" + getCigarString();}
 
         public static final class Serializer extends com.esotericsoftware.kryo.Serializer<LargeIndel> {
             @Override
@@ -672,6 +771,17 @@ public class BreakpointEvidence {
         }
 
         private MateUnmapped( final Kryo kryo, final Input input ) { super(kryo, input); }
+
+        private MateUnmapped(final SVInterval interval, final int weight,
+                             final String templateName, final TemplateFragmentOrdinal fragmentOrdinal,
+                             final boolean validated, final boolean forwardStrand,
+                             final String cigarString, final int mappingQuality,
+                             final int templateSize, final String readGroup,
+                             final List<StrandedInterval> distalTargets) {
+            super(interval, weight, templateName, fragmentOrdinal, validated, forwardStrand, cigarString,
+                    mappingQuality, templateSize, readGroup);
+            // note: passing distalTargets to have uniform testing interface to create BreakpointEvidence
+        }
 
         @Override
         public String toString() {
@@ -717,6 +827,22 @@ public class BreakpointEvidence {
             target = intervalSerializer.read(kryo, input, SVInterval.class);
             targetForwardStrand = input.readBoolean();
             targetQuality = input.readInt();
+        }
+
+        private DiscordantReadPairEvidence(final SVInterval interval, final int weight,
+                                  final String templateName, final TemplateFragmentOrdinal fragmentOrdinal,
+                                  final boolean validated, final boolean forwardStrand,
+                                  final String cigarString, final int mappingQuality,
+                                  final int templateSize, final String readGroup,
+                                  final List<StrandedInterval> distalTargets) {
+            super(interval, weight, templateName, fragmentOrdinal, validated, forwardStrand, cigarString,
+                    mappingQuality, templateSize, readGroup);
+            if(distalTargets.size() != 1) {
+                throw new IllegalArgumentException("DiscordantReadPairEvidence must have 1 distal target");
+            }
+            target = distalTargets.get(0).getInterval();
+            targetForwardStrand = distalTargets.get(0).getStrand();
+            targetQuality = Integer.MAX_VALUE;
         }
 
         @Override
@@ -814,6 +940,16 @@ public class BreakpointEvidence {
             super(kryo, input);
         }
 
+        private InterContigPair(final SVInterval interval, final int weight,
+                                final String templateName, final TemplateFragmentOrdinal fragmentOrdinal,
+                                final boolean validated, final boolean forwardStrand,
+                                final String cigarString, final int mappingQuality,
+                                final int templateSize, final String readGroup,
+                                final List<StrandedInterval> distalTargets) {
+            super(interval, weight, templateName, fragmentOrdinal, validated, forwardStrand, cigarString,
+                    mappingQuality, templateSize, readGroup, distalTargets);
+        }
+
         @Override
         public String toString() {
             return super.toString() + "\tIntercontigPair\t" + target;
@@ -844,6 +980,15 @@ public class BreakpointEvidence {
             super(kryo, input);
         }
 
+        private OutiesPair(final SVInterval interval, final int weight,
+                           final String templateName, final TemplateFragmentOrdinal fragmentOrdinal,
+                           final boolean validated, final boolean forwardStrand,
+                           final String cigarString, final int mappingQuality,
+                           final int templateSize, final String readGroup,
+                           final List<StrandedInterval> distalTargets) {
+            super(interval, weight, templateName, fragmentOrdinal, validated, forwardStrand, cigarString,
+                    mappingQuality, templateSize, readGroup, distalTargets);
+        }
 
         @Override
         protected void serialize( final Kryo kryo, final Output output ) {
@@ -880,6 +1025,16 @@ public class BreakpointEvidence {
             super(kryo, input);
         }
 
+        private SameStrandPair(final SVInterval interval, final int weight,
+                               final String templateName, final TemplateFragmentOrdinal fragmentOrdinal,
+                               final boolean validated, final boolean forwardStrand,
+                               final String cigarString, final int mappingQuality,
+                               final int templateSize, final String readGroup,
+                               final List<StrandedInterval> distalTargets) {
+            super(interval, weight, templateName, fragmentOrdinal, validated, forwardStrand, cigarString,
+                    mappingQuality, templateSize, readGroup, distalTargets);
+        }
+
         @Override
         public String toString() {
             return super.toString() + "\tSameStrandPair\t" + target;
@@ -914,6 +1069,21 @@ public class BreakpointEvidence {
             super(kryo, input);
             mateStartPosition = input.readInt();
             mateReverseStrand = input.readBoolean();
+        }
+
+        private WeirdTemplateSize(final SVInterval interval, final int weight,
+                                  final String templateName, final TemplateFragmentOrdinal fragmentOrdinal,
+                                  final boolean validated, final boolean forwardStrand,
+                                  final String cigarString, final int mappingQuality,
+                                  final int templateSize, final String readGroup,
+                                  final List<StrandedInterval> distalTargets) {
+            super(interval, weight, templateName, fragmentOrdinal, validated, forwardStrand, cigarString,
+                    mappingQuality, templateSize, readGroup, distalTargets);
+            if(distalTargets.size() != 1) {
+                throw new IllegalArgumentException("WeirdTemplateSize must have 1 distal target");
+            }
+            mateStartPosition = distalTargets.get(0).getInterval().getStart();
+            mateReverseStrand = !distalTargets.get(0).getStrand();
         }
 
         @Override

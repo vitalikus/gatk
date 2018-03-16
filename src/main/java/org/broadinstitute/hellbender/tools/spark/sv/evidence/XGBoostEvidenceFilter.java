@@ -8,6 +8,7 @@ import com.google.common.annotations.VisibleForTesting;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.TextCigarCodec;
+import org.apache.commons.collections4.map.HashedMap;
 import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.tools.spark.sv.StructuralVariationDiscoveryArgumentCollection;
 import org.broadinstitute.hellbender.tools.spark.sv.utils.*;
@@ -16,10 +17,8 @@ import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.gcs.BucketUtils;
 import scala.Tuple2;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.util.*;
 
 /**
@@ -29,6 +28,12 @@ import java.util.*;
 public final class XGBoostEvidenceFilter implements Iterator<BreakpointEvidence> {
     static private final boolean useFastMathExp = true;
     static private final boolean useClusterNumCoherent = false;
+    private static final List<String> defaultEvidenceTypeOrder = Arrays.asList(
+            "TemplateSizeAnomaly",
+            "MateUnmapped", "InterContigPair",
+            "SplitRead", "LargeIndel", "WeirdTemplateSize", "SameStrandPair", "OutiesPair"
+    );
+
     private final ReadMetadata readMetadata;
     private final PartitionCrossingChecker partitionCrossingChecker;
 
@@ -83,14 +88,22 @@ public final class XGBoostEvidenceFilter implements Iterator<BreakpointEvidence>
     }
 
     @VisibleForTesting
-    static Map<String, Integer> loadEvidenceTypeMap(final String evidenceTypeMapFileLocation) {
-        try(final InputStream inputStream = getInputStream(evidenceTypeMapFileLocation)) {
+    static Map<String, Integer> loadEvidenceTypeMap(final String categoricalVariablesMapFile) {
+        final HashMap<String, Integer> evidenceTypeMap = new HashMap<>();
+        if(categoricalVariablesMapFile == null || categoricalVariablesMapFile.isEmpty()) {
+            // no categorical variables file, just use default evidence order
+            for(int index = 0; index < defaultEvidenceTypeOrder.size(); ++index) {
+                evidenceTypeMap.put(defaultEvidenceTypeOrder.get(index), index);
+            }
+            return evidenceTypeMap;
+        }
+        // override default evidence order with saved order
+        try(final InputStream inputStream = getInputStream(categoricalVariablesMapFile)) {
             final JsonNode testDataNode = new ObjectMapper().readTree(inputStream);
             final JsonNode evidenceTypeArrayNode = testDataNode.get("evidence_type");
             if(!evidenceTypeArrayNode.isArray()) {
                 throw new IllegalArgumentException("evidenceTypeNode does not encode a valid array");
             }
-            final HashMap<String, Integer> evidenceTypeMap = new HashMap<>();
             int index = 0;
             for(final JsonNode evidenceTypeNode : evidenceTypeArrayNode) {
                 evidenceTypeMap.put(evidenceTypeNode.asText(), index);
@@ -99,7 +112,7 @@ public final class XGBoostEvidenceFilter implements Iterator<BreakpointEvidence>
             return evidenceTypeMap;
         } catch(IOException e) {
             throw new GATKException(
-                    "Unable to load evidence-type map from file " + evidenceTypeMapFileLocation + ": " + e.getMessage()
+                    "Unable to load evidence-type map from file " + categoricalVariablesMapFile + ": " + e.getMessage()
             );
         }
     }
