@@ -98,11 +98,6 @@ if [ -n "$STAGING_DIR" ]; then
     GIT_CHECKOUT_COMMAND="git checkout ${GITHUB_DIR}${GITHUB_TAG}"
     echo "${GIT_CHECKOUT_COMMAND}"
     ${GIT_CHECKOUT_COMMAND}
-    # pull just the large runtime resources into the staging area so they are available to the build
-    # when its done as part of the Docker build so the resources can be compiled into the jar as resources
-    GIT_PULL_LARGE_COMMAND="git lfs pull --include src/main/resources/large/"
-    echo ${GIT_PULL_LARGE_COMMAND}
-    ${GIT_PULL_LARGE_COMMAND}
 fi
 
 # Build
