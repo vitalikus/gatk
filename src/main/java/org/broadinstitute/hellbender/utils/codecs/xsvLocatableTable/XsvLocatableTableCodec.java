@@ -132,6 +132,8 @@ public final class XsvLocatableTableCodec extends AsciiFeatureCodec<XsvTableFeat
 
     private boolean isHeaderInitialized = false;
 
+    private boolean hasFirstRecordBeenRead = false;
+
     //==================================================================================================================
     // Constructors:
 
@@ -204,10 +206,10 @@ public final class XsvLocatableTableCodec extends AsciiFeatureCodec<XsvTableFeat
         }
         // HACK: For tribble to work properly, we need to know the position (in bytes) of the file pointer.  Currently, that cannot be ascertained.
         // HACK:  this code will just detect if the header is being read again and ignore it.
-        else if ((header != null) && ( IntStream.range(0, split.size()).allMatch(i -> header.get(i).equals(split.get(i))))) {
+        else if ((header != null) && !hasFirstRecordBeenRead && ( IntStream.range(0, split.size()).allMatch(i -> header.get(i).equals(split.get(i))))) {
             return null;
         }
-
+        hasFirstRecordBeenRead = true;
         return new XsvTableFeature(headerToIndex.get(finalContigColumn), headerToIndex.get(finalStartColumn),
                 headerToIndex.get(finalEndColumn), header, split, dataSourceName);
     }

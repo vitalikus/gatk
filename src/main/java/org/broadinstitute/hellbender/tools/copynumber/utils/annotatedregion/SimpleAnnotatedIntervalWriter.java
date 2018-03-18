@@ -94,7 +94,8 @@ public class SimpleAnnotatedIntervalWriter implements AnnotatedIntervalWriter {
             try {
                 final SAMFileHeader samFileHeader = annotatedIntervalHeader.getSamFileHeader();
                 if (samFileHeader != null) {
-
+                    //TODO: Structured comments should be packed and unpacked in separate methods (static public in the AI Codec)
+                    //TODO: Test NIO?
                     // Remove old structured comments, if present.
                     final List<String> commentsToWrite = samFileHeader.getComments().stream()
                             .filter(c -> !c.startsWith(SAMTextHeaderCodec.COMMENT_PREFIX + CONTIG_COL_COMMENT))
