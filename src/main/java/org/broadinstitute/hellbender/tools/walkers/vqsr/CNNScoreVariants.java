@@ -14,6 +14,7 @@ import org.broadinstitute.hellbender.engine.filters.VariantFilter;
 import org.broadinstitute.hellbender.engine.filters.VariantFilterLibrary;
 import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.utils.io.Resource;
+import org.broadinstitute.hellbender.utils.io.IOUtils;
 import org.broadinstitute.hellbender.utils.python.StreamingPythonScriptExecutor;
 import org.broadinstitute.hellbender.utils.read.GATKRead;
 import org.broadinstitute.hellbender.utils.runtime.AsynchronousStreamWriterService;
@@ -26,7 +27,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.StreamSupport;
 
-import static org.broadinstitute.hellbender.utils.io.IOUtils.writeTempResource;
+
 
 /**
  * Annotate a VCF with scores from a Convolutional Neural Network (CNN).
@@ -48,7 +49,7 @@ import static org.broadinstitute.hellbender.utils.io.IOUtils.writeTempResource;
  * <h3>1D Model with pre-trained architecture</h3>
  *
  * <pre>
- * gatk CNNScoreVariants\
+ * gatk CNNScoreVariants \
  *   -V vcf_to_annotate.vcf.gz \
  *   -R reference.fasta \
  *   -O annotated.vcf
@@ -57,7 +58,7 @@ import static org.broadinstitute.hellbender.utils.io.IOUtils.writeTempResource;
  * <h3>2D Model with pre-trained architecture</h3>
  *
  * <pre>
- * gatk CNNScoreVariants\
+ * gatk CNNScoreVariants \
  *   -I aligned_reads.bam \
  *   -V vcf_to_annotate.vcf.gz \
  *   -R reference.fasta \
@@ -70,7 +71,7 @@ import static org.broadinstitute.hellbender.utils.io.IOUtils.writeTempResource;
  * <h3>1D Model with user-supplied architecture and weights:</h3>
  *
  * <pre>
- * gatk CNNScoreVariants\
+ * gatk CNNScoreVariants \
  *   -V vcf_to_annotate.vcf.gz \
  *   -R reference.fasta \
  *   -O annotated.vcf \
@@ -81,7 +82,7 @@ import static org.broadinstitute.hellbender.utils.io.IOUtils.writeTempResource;
  * <h3>2D Model with user-supplied architecture and weights:</h3>
  *
  * <pre>
- * gatk CNNScoreVariants\
+ * gatk CNNScoreVariants \
  *   -I aligned_reads.bam \
  *   -V vcf_to_annotate.vcf.gz \
  *   -R reference.fasta \
@@ -170,8 +171,8 @@ public class CNNScoreVariants extends VariantWalker {
 
     private String scoreKey;
 
-    private static String resourcePathReadTensor = "large" + File.separator + "small_2d.json";
-    private static String resourcePathReferenceTensor = "large" + File.separator + "1d_cnn_mix_train_full_bn.json";
+    private static String resourcePathReadTensor = "large" + File.separator + "cnn_score_variants" + File.separator + "small_2d.json";
+    private static String resourcePathReferenceTensor = "large" + File.separator + "cnn_score_variants" + File.separator + "1d_cnn_mix_train_full_bn.json";
 
     @Override
     protected String[] customCommandLineValidation() {
@@ -196,7 +197,7 @@ public class CNNScoreVariants extends VariantWalker {
     @Override
     protected VariantFilter makeVariantFilter(){
         if (filterSymbolicAndSV) {
-            return VariantFilterLibrary.REMOVE_SV_AND_SYMBOLIC;
+            return VariantFilterLibrary.NOT_SV_OR_SYMBOLIC;
         } else {
             return VariantFilterLibrary.ALLOW_ALL_VARIANTS;
         }
@@ -462,8 +463,8 @@ public class CNNScoreVariants extends VariantWalker {
             throw new GATKException("No default architecture for tensor type:" + tensorType.name());
         }
 
-        File architectureFile = writeTempResource(architectureResource);
-        File weightsHD5 = writeTempResource(weightsResourceHD5);
+        File architectureFile = IOUtils.writeTempResource(architectureResource);
+        File weightsHD5 = IOUtils.writeTempResource(weightsResourceHD5);
         architectureFile.deleteOnExit();
         weightsHD5.deleteOnExit();
         architecture = architectureFile.getAbsolutePath();
