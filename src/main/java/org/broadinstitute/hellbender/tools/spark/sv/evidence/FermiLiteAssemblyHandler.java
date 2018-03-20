@@ -1,21 +1,19 @@
 package org.broadinstitute.hellbender.tools.spark.sv.evidence;
 
 import com.google.common.annotations.VisibleForTesting;
-import htsjdk.samtools.SAMFlag;
 import htsjdk.samtools.util.SequenceUtil;
 import org.broadinstitute.hellbender.exceptions.GATKException;
-import org.broadinstitute.hellbender.tools.spark.sv.utils.SVFastqUtils;
-import org.broadinstitute.hellbender.tools.spark.sv.utils.SVUtils;
+import org.broadinstitute.hellbender.tools.spark.sv.utils.*;
+import org.broadinstitute.hellbender.tools.spark.utils.HopscotchMultiMap;
 import org.broadinstitute.hellbender.utils.BaseUtils;
 import org.broadinstitute.hellbender.utils.bwa.BwaMemAligner;
 import org.broadinstitute.hellbender.utils.bwa.BwaMemAlignment;
-import org.broadinstitute.hellbender.utils.bwa.BwaMemIndex;
 import org.broadinstitute.hellbender.utils.bwa.BwaMemIndexCache;
 import org.broadinstitute.hellbender.utils.fermi.FermiLiteAssembler;
 import org.broadinstitute.hellbender.utils.fermi.FermiLiteAssembly;
+import org.broadinstitute.hellbender.utils.fermi.FermiLiteAssembly.Contig;
+import org.broadinstitute.hellbender.utils.fermi.FermiLiteAssembly.Connection;
 import org.broadinstitute.hellbender.utils.gcs.BucketUtils;
-import org.broadinstitute.hellbender.utils.gcs.BucketUtils.AutoDelete;
-import org.broadinstitute.hellbender.utils.io.IOUtils;
 import scala.Tuple2;
 
 import java.io.*;
@@ -29,14 +27,20 @@ public final class FermiLiteAssemblyHandler implements FindBreakpointEvidenceSpa
     private final String fastqDir;
     private final boolean writeGFAs;
     private final boolean popVariantBubbles;
+    private final boolean removeShadowedContigs;
+    private final boolean expandAssemblyGraph;
 
     public FermiLiteAssemblyHandler( final String alignerIndexFile, final int maxFastqSize,
-                                     final String fastqDir, final boolean writeGFAs, final boolean popVariantBubbles ) {
+                                     final String fastqDir, final boolean writeGFAs,
+                                     final boolean popVariantBubbles, final boolean removeShadowedContigs,
+                                     final boolean expandAssemblyGraph ) {
         this.alignerIndexFile = alignerIndexFile;
         this.maxFastqSize = maxFastqSize;
         this.fastqDir = fastqDir;
         this.writeGFAs = writeGFAs;
         this.popVariantBubbles = popVariantBubbles;
+        this.removeShadowedContigs = removeShadowedContigs;
+        this.expandAssemblyGraph = expandAssemblyGraph;
     }
 
     @Override
@@ -71,21 +75,13 @@ public final class FermiLiteAssemblyHandler implements FindBreakpointEvidenceSpa
             return new AlignedAssemblyOrExcuse(intervalID, "no assembly -- no contigs produced by assembler.");
         }
 
-        // patch up the assembly using read pairs to link contigs
-        final FermiLiteAssembly assembly = initialAssembly;
-/*
-        if ( fastqDir == null ) {
-                assembly = reviseAssembly(initialAssembly, assemblyName, readsList, null);
-        } else {
-            final String detailsFile = String.format("%s/%s.details", fastqDir, assemblyName);
-            try ( final Writer writer = new BufferedWriter(new OutputStreamWriter(BucketUtils.createFile(detailsFile))) ) {
-                assembly = reviseAssembly(initialAssembly, assemblyName, readsList, writer);
-            }
-            catch ( final IOException ioe ) {
-                throw new GATKException("Can't write "+detailsFile, ioe);
-            }
-        }
-*/
+        // patch up the assembly to improve contiguity
+        final FermiLiteAssembly unshadowedAssembly =
+                removeShadowedContigs ? removeShadowedContigs(initialAssembly) : initialAssembly;
+        final FermiLiteAssembly noUnbranchedAssembly = removeUnbranchedConnections(unshadowedAssembly);
+        final FermiLiteAssembly assembly =
+                expandAssemblyGraph ? expandAssemblyGraph(noUnbranchedAssembly) : noUnbranchedAssembly;
+
         // record the assembly as a GFA, if requested
         if ( fastqDir != null && writeGFAs ) {
             final String gfaName =  String.format("%s/%s.gfa", fastqDir, assemblyName);
@@ -103,7 +99,7 @@ public final class FermiLiteAssemblyHandler implements FindBreakpointEvidenceSpa
             aligner.setIntraCtgOptions();
             final List<byte[]> sequences =
                     assembly.getContigs().stream()
-                            .map(FermiLiteAssembly.Contig::getSequence)
+                            .map(Contig::getSequence)
                             .collect(SVUtils.arrayListCollector(assembly.getNContigs()));
             final List<List<BwaMemAlignment>> alignments = aligner.alignSeqs(sequences);
             result = new AlignedAssemblyOrExcuse(intervalID, assembly, secondsInAssembly, alignments);
@@ -113,306 +109,370 @@ public final class FermiLiteAssemblyHandler implements FindBreakpointEvidenceSpa
     }
 
     @VisibleForTesting
-    static FermiLiteAssembly reviseAssembly( final FermiLiteAssembly assembly,
-                                             final String assemblyName,
-                                             final List<SVFastqUtils.FastqRead> readsList,
-                                             final Writer writer ) {
-        final int nContigs = assembly.getNContigs();
-        if ( nContigs == 0 ) return assembly;
+    static FermiLiteAssembly removeShadowedContigs( final FermiLiteAssembly assembly ) {
+        final int kmerSize = 31;
+        final double maxMismatchRate = .05;
 
-        // alignments of reads in readsList onto assembly contigs
-        final List<List<BwaMemAlignment>> alignments;
-
-        final String tmpDir = IOUtils.tempDir("fbes", null).getPath();
-        try ( final AutoDelete tmpDirAD = new AutoDelete(tmpDir) ) {
-            final String fastaFile = String.format("%s/%s.fasta", tmpDirAD.getPath(), assemblyName);
-            try ( final AutoDelete fastaFileAD = new AutoDelete(fastaFile) ) {
-
-                // write a temporary FASTA file with all the assembled contigs
-                try ( final BufferedOutputStream os =
-                              new BufferedOutputStream(BucketUtils.createFile(fastaFileAD.getPath())) ) {
-                    for ( int id = 0; id != nContigs; ++id ) {
-                        final String seqName = assemblyName + "." + id;
-                        final byte[] line1 = (">" + seqName + "\n").getBytes();
-                        final byte[] seq = assembly.getContigs().get(id).getSequence();
-                        os.write(line1);
-                        os.write(seq);
-                        os.write('\n');
-                    }
-                }
-                catch ( final IOException ioe ) {
-                    throw new GATKException("Unable to write fasta file of contigs from assembly " + assemblyName, ioe);
-                }
-
-                // create a BWA-mem index from the assembled contigs
-                final String imageFile = String.format("%s/%s.img", tmpDirAD.getPath(), assemblyName);
-                try ( final AutoDelete imageFileAD = new AutoDelete(imageFile) ) {
-                    BwaMemIndex.createIndexImageFromFastaFile(fastaFileAD.getPath(), imageFileAD.getPath());
-
-                    // align the reads that were assembled onto the assembled contigs
-                    try ( final BwaMemIndex assemblyIndex = new BwaMemIndex(imageFileAD.getPath());
-                          final BwaMemAligner aligner = new BwaMemAligner(assemblyIndex) ) {
-                        aligner.setIntraCtgOptions();
-                        alignments = aligner.alignSeqs(readsList, SVFastqUtils.FastqRead::getBases);
-                    }
-                }
+        // make a map of assembled kmers
+        final int capacity = assembly.getContigs().stream().mapToInt(tig -> tig.getSequence().length - kmerSize + 1).sum();
+        final HopscotchMultiMap<SVKmerShort, ContigLocation, KmerLocation> kmerMap = new HopscotchMultiMap<>(capacity);
+        assembly.getContigs().forEach(tig -> {
+            int contigOffset = 0;
+            final Iterator<SVKmer> contigItr = new SVKmerizer(tig.getSequence(), kmerSize, new SVKmerShort());
+            while ( contigItr.hasNext() ) {
+                final SVKmerShort kmer = (SVKmerShort)contigItr.next();
+                final SVKmerShort canonicalKmer = kmer.canonical(kmerSize);
+                final ContigLocation location = new ContigLocation(tig, contigOffset++, kmer.equals(canonicalKmer));
+                kmerMap.add(new KmerLocation(canonicalKmer, location));
             }
-        }
-        catch ( final IOException ioe ) {
-            throw new GATKException("Unable to clean up temporary file.", ioe);
-        }
+        });
 
-        if ( writer != null ) {
-            try {
-                writer.write("Initial assembly:\n");
-                writer.write("id\tlen\tnReads\tseq\n");
-                final HashMap<FermiLiteAssembly.Contig, Integer> idMap = new HashMap<>(SVUtils.hashMapCapacity(nContigs));
-                int id = 0;
-                final List<FermiLiteAssembly.Contig> contigs = assembly.getContigs();
-                for ( final FermiLiteAssembly.Contig contig : contigs ) {
-                    idMap.put(contig, id++);
-                }
-                for ( final FermiLiteAssembly.Contig contig : contigs ) {
-                    final int contigId = idMap.get(contig);
-                    final String sequence = new String(contig.getSequence());
-                    writer.write(contigId + "\t" + sequence.length() + "\t" + contig.getNSupportingReads() + "\t");
-                    writer.write(sequence.substring(0,30));
-                    writer.write("...");
-                    writer.write(sequence.substring(sequence.length()-30));
-                    writer.write('\n');
-                    for ( final FermiLiteAssembly.Connection connection : contig.getConnections() ) {
-                        final int targetId = idMap.get(connection.getTarget());
-                        final int overlapLen = connection.getOverlapLen();
-                        writer.write("\t" + (connection.isRC() ? "-" : "+") + contigId +
-                                "--(" + overlapLen + ")-->" +
-                                (connection.isTargetRC() ? "-" : "+") + targetId + "\n");
-                    }
-                    final int nReads = readsList.size();
-                    for ( int idx = 0; idx < nReads; idx += 2 ) {
-                        final List<BwaMemAlignment> alignList1 = alignments.get(idx);
-                        final List<BwaMemAlignment> alignList2 = alignments.get(idx + 1);
-                        for ( final BwaMemAlignment alignment1 : alignList1 ) {
-                            if ( SAMFlag.READ_UNMAPPED.isSet(alignment1.getSamFlag()) ) continue;
-                            for ( final BwaMemAlignment alignment2 : alignList2 ) {
-                                if ( SAMFlag.READ_UNMAPPED.isSet(alignment2.getSamFlag()) ) continue;
-                                if ( alignment1.getRefId() != contigId && alignment2.getRefId() != contigId ) continue;
-                                final boolean isRC1 = SAMFlag.READ_REVERSE_STRAND.isSet(alignment1.getSamFlag());
-                                // notice that the following flag is inverted -- we expect pairs to be on opposite strands
-                                final boolean isRC2 = !SAMFlag.READ_REVERSE_STRAND.isSet(alignment2.getSamFlag());
-                                if ( alignment1.getRefId() != alignment2.getRefId() || isRC1 != isRC2 ) {
-                                    writer.write("\t" + readsList.get(idx).getName() + "\t" +
-                                            (isRC1 ? "-" : "+") + alignment1.getRefId() + ":" + alignment1.getRefStart() +
-                                            "\t" + alignment1.getCigar() + "\t" +
-                                            (isRC2 ? "-" : "+") + alignment2.getRefId() + ":" + alignment2.getRefStart() +
-                                            "\t" + alignment2.getCigar() + "\n");
+        // remove contigs that vary by a small number of SNPs from a sub-sequence of another contig
+        final Set<Contig> contigsToRemove = new HashSet<>();
+        assembly.getContigs().forEach(tig -> {
+            final Set<ContigLocation> testedLocations = new HashSet<>();
+            final byte[] tigBases = tig.getSequence();
+            final int maxMismatches = (int)(tigBases.length * maxMismatchRate);
+            int tigOffset = 0;
+            final SVKmerizer kmerItr = new SVKmerizer(tig.getSequence(), kmerSize, new SVKmerShort(kmerSize));
+            while ( kmerItr.hasNext() ) {
+                final SVKmerShort contigKmer = (SVKmerShort)kmerItr.next();
+                final SVKmerShort canonicalContigKmer = contigKmer.canonical(kmerSize);
+                final boolean canonical = contigKmer.equals(canonicalContigKmer);
+                final Iterator<KmerLocation> locItr = kmerMap.findEach(canonicalContigKmer);
+                while ( locItr.hasNext() ) {
+                    final ContigLocation contigLocation = locItr.next().getLocation();
+                    final Contig tig2 = contigLocation.getContig();
+                    if ( tig == tig2 || contigsToRemove.contains(tig2) ) continue;
+                    final byte[] tig2Bases = tig2.getSequence();
+                    final boolean isRC = canonical != contigLocation.isCanonical();
+                    final int tig2Offset =
+                            isRC ? tig2Bases.length - contigLocation.getOffset() - kmerSize : contigLocation.getOffset();
+                    if ( tigOffset > tig2Offset ||
+                            tigBases.length - tigOffset > tig2Bases.length - tig2Offset ) continue;
+                    final int tig2Start = tig2Offset - tigOffset;
+                    if ( testedLocations.add(new ContigLocation(tig2, tig2Start, isRC)) ) {
+                        int nMismatches = 0;
+                        if ( !isRC ) {
+                            for ( int idx = 0; idx != tigBases.length; ++idx ) {
+                                if ( tigBases[idx] != tig2Bases[tig2Start+idx] ) {
+                                    if ( (nMismatches += 1) > maxMismatches ) break;
+                                }
+                            }
+                        } else {
+                            final int tig2RCOffset = tig2Bases.length - tig2Start - 1;
+                            for ( int idx = 0; idx != tigBases.length; ++idx ) {
+                                if ( tigBases[idx] != BaseUtils.simpleComplement(tig2Bases[tig2RCOffset-idx]) ) {
+                                    if ( (nMismatches += 1) > maxMismatches ) break;
                                 }
                             }
                         }
+                        if ( nMismatches <= maxMismatches ) {
+                            contigsToRemove.add(tig);
+                            break;
+                        }
                     }
                 }
+                tigOffset += 1;
             }
-            catch ( final IOException ioe ) {
-                throw new GATKException("Can't write assembly details file for assembly "+assemblyName, ioe);
-            }
-        }
+        });
 
-        // find read pairs that are NOT innies on the same contig (i.e., pairs that connect the graph of assembled contigs)
-        // and count the number of pairs that corroborate each connection
-        final Map<Link, Integer> linkCounts = new HashMap<>();
-        final int nReads = readsList.size();
-        for ( int idx = 0; idx < nReads; idx += 2 ) {
-            final List<BwaMemAlignment> alignList1 = alignments.get(idx);
-            final List<BwaMemAlignment> alignList2 = alignments.get(idx + 1);
-            for ( final BwaMemAlignment alignment1 : alignList1 ) {
-                if ( SAMFlag.READ_UNMAPPED.isSet(alignment1.getSamFlag()) ) continue;
-                for ( final BwaMemAlignment alignment2 : alignList2 ) {
-                    if ( SAMFlag.READ_UNMAPPED.isSet(alignment2.getSamFlag()) ) continue;
-                    final boolean isRC1 = SAMFlag.READ_REVERSE_STRAND.isSet(alignment1.getSamFlag());
-                    // notice that the following flag is inverted -- we expect pairs to be on opposite strands
-                    final boolean isRC2 = !SAMFlag.READ_REVERSE_STRAND.isSet(alignment2.getSamFlag());
-                    if ( alignment1.getRefId() != alignment2.getRefId() || isRC1 != isRC2 ) {
-                        final Link link =
-                                new Link(new ContigStrand(alignment1.getRefId(), isRC1),
-                                         new ContigStrand(alignment2.getRefId(), isRC2));
-                        linkCounts.merge(link, 1, Integer::sum);
-                    }
-                }
-            }
-        }
+        final List<Contig> contigList = new ArrayList<>(assembly.getContigs().size()-contigsToRemove.size());
+        assembly.getContigs().stream()
+                .filter(tig -> !contigsToRemove.contains(tig))
+                .forEach(contigList::add);
 
-        // we'll use a magic number for this proof of concept
-        final int MIN_LINK_COUNT = 8;
-        // TODO: find a principled way of determining what this number should be
-        final Iterator<Map.Entry<Link, Integer>> linkItr = linkCounts.entrySet().iterator();
-        while ( linkItr.hasNext() ) {
-            final Map.Entry<Link, Integer> entry = linkItr.next();
-            if ( entry.getValue() < MIN_LINK_COUNT ) {
-                linkItr.remove();
-                continue;
-            }
+        final Set<Contig> staleConnectionContigs = new HashSet<>(SVUtils.hashMapCapacity(contigsToRemove.size()));
+        contigsToRemove.forEach(tig ->
+                tig.getConnections().forEach(conn ->
+                        staleConnectionContigs.add(conn.getTarget())));
 
-            // for this proof of concept, we'll connect only contigs that are corroborated by a
-            // FermiLiteAssembly.Connection, and we'll assume that the assembler got the overlap correct.
-            // we'll ignore underlaps (i.e., connections with negative overlaps) for now.
-            final Link link = entry.getKey();
-            final FermiLiteAssembly.Contig sourceContig = assembly.getContig(link.getSourceId());
-            final FermiLiteAssembly.Contig targetContig = assembly.getContig(link.getTargetId());
-            boolean foundConnection = false;
-            for ( final FermiLiteAssembly.Connection connection : sourceContig.getConnections() ) {
-                if ( connection.getTarget() == targetContig &&
-                        connection.isRC() == link.isSourceRC() &&
-                        connection.isTargetRC() == link.isTargetRC() &&
-                        connection.getOverlapLen() >= 0 ) {
-                    // ugly hack -- replace the count with the overlap length from the connection, which we'll need below
-                    entry.setValue(connection.getOverlapLen());
-                    foundConnection = true;
-                    break;
-                }
-
-            }
-            if ( !foundConnection ) linkItr.remove();
-        }
-
-        if ( linkCounts.isEmpty() ) {
-            return assembly;
-        }
-
-        if ( writer != null ) {
-            try {
-                writer.write("\nJoining " + linkCounts.size() + " contig pairs:\n");
-            }
-            catch ( final IOException ioe ) {
-                throw new GATKException("Can't write assembly details file for assembly "+assemblyName, ioe);
-            }
-        }
-        final List<FermiLiteAssembly.Contig> contigList = new ArrayList<>(nContigs);
-        final Set<Integer> representedContigs = new HashSet<>(SVUtils.hashMapCapacity(nContigs));
-        for ( final Map.Entry<Link, Integer> entry : linkCounts.entrySet() ) {
-            final Link link = entry.getKey();
-            if ( writer != null ) {
-                try {
-                    writer.write("\t" + (link.isSourceRC() ? "-" : "+") + link.getSourceId() +
-                            "--(" + entry.getValue() + ")-->" +
-                            (link.isTargetRC() ? "-" : "+") + link.getTargetId() + "\n");
-                }
-                catch ( final IOException ioe ) {
-                    throw new GATKException("Can't write assembly details file for assembly "+assemblyName, ioe);
-                }
-            }
-            final int overlapLen = entry.getValue();
-            final FermiLiteAssembly.Contig sourceContig =
-                    link.isSourceRC() ?
-                            rcContig(assembly.getContig(link.getSourceId())) :
-                            assembly.getContig(link.getSourceId());
-            final FermiLiteAssembly.Contig targetContig =
-                    link.isTargetRC() ?
-                            rcContig(assembly.getContig(link.getTargetId())) :
-                            assembly.getContig(link.getTargetId());
-            final int sourceLength = sourceContig.getSequence().length;
-            final int targetLength = targetContig.getSequence().length - overlapLen;
-            final int contigLength = sourceLength + targetLength;
-            final byte[] sequence = new byte[contigLength];
-            System.arraycopy(sourceContig.getSequence(), 0, sequence, 0, sourceLength);
-            System.arraycopy(targetContig.getSequence(), overlapLen, sequence, sourceLength, targetLength);
-            final byte[] perBaseCoverage = new byte[contigLength];
-            System.arraycopy(sourceContig.getPerBaseCoverage(), 0, perBaseCoverage, 0, sourceLength);
-            System.arraycopy(targetContig.getPerBaseCoverage(), overlapLen, perBaseCoverage, sourceLength, targetLength);
-            final int nSupportingReads = sourceContig.getNSupportingReads() + targetContig.getNSupportingReads();
-            contigList.add(new FermiLiteAssembly.Contig(sequence, perBaseCoverage, nSupportingReads));
-            representedContigs.add(link.getSourceId());
-            representedContigs.add(link.getTargetId());
-        }
-
-        for ( int id = 0; id != nContigs; ++id ) {
-            if ( !representedContigs.contains(id) ) {
-                final FermiLiteAssembly.Contig contig = assembly.getContig(id);
-                final byte[] sequence = contig.getSequence();
-                final byte[] perBaseCoverage = contig.getPerBaseCoverage();
-                final int nSupportingReads = contig.getNSupportingReads();
-                contigList.add(new FermiLiteAssembly.Contig(sequence, perBaseCoverage, nSupportingReads));
-            }
-        }
+        staleConnectionContigs.forEach(tig -> {
+            final List<Connection> connections = new ArrayList<>(tig.getConnections().size() - 1);
+            tig.getConnections().stream()
+                    .filter(conn -> !contigsToRemove.contains(conn.getTarget()))
+                    .forEach(connections::add);
+            tig.setConnections(connections);
+        });
 
         return new FermiLiteAssembly(contigList);
     }
 
-    private static FermiLiteAssembly.Contig rcContig( final FermiLiteAssembly.Contig contig ) {
-        final byte[] sequence = BaseUtils.simpleReverseComplement(contig.getSequence());
-        final byte[] perBaseCoverage = Arrays.copyOf(contig.getPerBaseCoverage(), contig.getPerBaseCoverage().length);
-        SequenceUtil.reverse(perBaseCoverage, 0, perBaseCoverage.length);
-        return new FermiLiteAssembly.Contig(sequence, perBaseCoverage, contig.getNSupportingReads());
+    // join contigs that connect without any other branches
+    @VisibleForTesting
+    static FermiLiteAssembly removeUnbranchedConnections( final FermiLiteAssembly assembly ) {
+        final int nContigs = assembly.getNContigs();
+        final List<Contig> contigList = new ArrayList<>(nContigs);
+        final Set<Contig> examined = new HashSet<>(SVUtils.hashMapCapacity(nContigs));
+
+        // find contigs with a single predecessor contig that has a single successor (or vice versa) and join them
+        assembly.getContigs().forEach(tig -> {
+            if ( !examined.add(tig) ) return;
+            Connection conn;
+            while ( (conn = getSolePredecessor(tig)) != null &&
+                    !examined.contains(conn.getTarget()) &&
+                    getSingletonConnection(conn.getTarget(), conn.isTargetRC()) != null ) {
+                examined.add(conn.getTarget());
+                tig = joinContigsWithConnections(tig, Collections.singletonList(conn));
+            }
+            while ( (conn = getSoleSuccessor(tig)) != null &&
+                    !examined.contains(conn.getTarget()) &&
+                    getSingletonConnection(conn.getTarget(), !conn.isTargetRC()) != null ) {
+                examined.add(conn.getTarget());
+                tig = joinContigsWithConnections(tig, Collections.singletonList(conn));
+            }
+            contigList.add(tig);
+        });
+        return new FermiLiteAssembly(contigList);
     }
 
-    private static final class ContigStrand implements Comparable<ContigStrand> {
-        private final int contigId;
+    private static Connection getSolePredecessor( final Contig contig ) {
+        return getSingletonConnection(contig, true);
+    }
+
+    private static Connection getSoleSuccessor( final Contig contig ) {
+        return getSingletonConnection(contig, false);
+    }
+
+    private static Connection getSingletonConnection( final Contig contig, final boolean isRC ) {
+        Connection singleton = null;
+        for ( Connection conn : contig.getConnections() ) {
+            if ( conn.isRC() == isRC ) {
+                if ( singleton == null ) singleton = conn;
+                else return null;
+            }
+        }
+        return singleton;
+    }
+
+    private static Contig joinContigsWithConnections( final Contig firstContig, final List<Connection> path ) {
+        final Contig result = joinContigs(firstContig, path);
+        final Connection lastConnection = path.get(path.size() - 1);
+        final Contig lastContig = lastConnection.getTarget();
+        final int capacity = firstContig.getConnections().size() + lastContig.getConnections().size() - 2;
+        final List<Connection> connections = new ArrayList<>(capacity);
+        final boolean firstIsRC = path.get(0).isRC();
+        for ( final Connection conn : firstContig.getConnections() ) {
+            if ( conn.isRC() != firstIsRC ) {
+                replaceConnection(conn.getTarget(), firstContig, !conn.isTargetRC(), !conn.isRC(), result, false);
+                connections.add(new Connection(conn.getTarget(), conn.getOverlapLen(), true, conn.isTargetRC()));
+            }
+        }
+        final boolean lastIsRC = lastConnection.isTargetRC();
+        for ( final Connection conn : lastContig.getConnections() ) {
+            if ( conn.isRC() == lastIsRC ) {
+                replaceConnection(conn.getTarget(), lastContig, !conn.isTargetRC(), !conn.isRC(), result, true);
+                connections.add(new Connection(conn.getTarget(), conn.getOverlapLen(), false, conn.isTargetRC()));
+            }
+        }
+        result.setConnections(connections);
+        return result;
+    }
+
+    private static void replaceConnection( final Contig contig,
+                                           final Contig target,
+                                           final boolean isRC,
+                                           final boolean isTargetRC,
+                                           final Contig newTarget,
+                                           final boolean newTargetRC ) {
+        final List<Connection> connections = contig.getConnections();
+        final List<Connection> newConnections = new ArrayList<>(connections.size());
+        for ( final Connection conn : connections ) {
+            final Connection toAdd;
+            if ( conn.getTarget() == target && conn.isRC() == isRC && conn.isTargetRC() == isTargetRC ) {
+                toAdd = new Connection(newTarget, conn.getOverlapLen(), isRC, newTargetRC);
+            } else {
+                toAdd = conn;
+            }
+            newConnections.add(toAdd);
+        }
+        contig.setConnections(newConnections);
+    }
+    private static Contig joinContigs( final Contig firstContig, final List<Connection> path ) {
+        final int nSupportingReads =
+                path.stream()
+                        .mapToInt(conn -> conn.getTarget().getNSupportingReads())
+                        .reduce(firstContig.getNSupportingReads(), Integer::sum);
+        final int newContigLen =
+                path.stream()
+                        .mapToInt(conn -> conn.getTarget().getSequence().length - conn.getOverlapLen())
+                        .reduce(firstContig.getSequence().length, Integer::sum);
+        final byte[] sequence = new byte[newContigLen];
+        int dstIndex = firstContig.getSequence().length;
+        System.arraycopy(firstContig.getSequence(), 0, sequence, 0, dstIndex);
+        if ( path.get(0).isRC() )
+            SequenceUtil.reverseComplement(sequence, 0, dstIndex);
+        for ( final Connection conn : path ) {
+            final byte[] contigSequence = conn.getTarget().getSequence();
+            final int len = contigSequence.length - conn.getOverlapLen();
+            if ( !conn.isTargetRC() ) {
+                System.arraycopy(contigSequence, conn.getOverlapLen(), sequence, dstIndex, len);
+            }
+            else {
+                System.arraycopy(contigSequence, 0, sequence, dstIndex, len);
+                SequenceUtil.reverseComplement(sequence, dstIndex, len);
+            }
+            dstIndex += len;
+        }
+        return new Contig(sequence, null, nSupportingReads);
+    }
+
+    // trace all paths, breaking only at cycles and at contigs that require phasing
+    @VisibleForTesting
+    static FermiLiteAssembly expandAssemblyGraph( final FermiLiteAssembly assembly ) {
+        final int nContigs = assembly.getNContigs();
+        final List<Contig> contigList = new ArrayList<>(nContigs);
+        final Set<Contig> examined = new HashSet<>(SVUtils.hashMapCapacity(nContigs));
+
+        // trace paths from sources and sinks
+        assembly.getContigs().forEach(tig -> {
+            if ( examined.contains(tig) ) return;
+            if ( tig.getConnections().isEmpty() ) {
+                contigList.add(tig);
+                examined.add(tig);
+            } else {
+                final int nPredecessors = countPredecessors(tig);
+                final int nSuccessors = tig.getConnections().size() - nPredecessors;
+                if ( nPredecessors == 0 ) {
+                    tracePaths(tig, false, contigList, examined);
+                } else if ( nSuccessors == 0 ) {
+                    tracePaths(tig, true, contigList, examined);
+                }
+            }
+        });
+
+        // anything not examined must be part of a smooth cycle -- just start anywhere to pick it up
+        assembly.getContigs().forEach(tig -> {
+            if ( !examined.contains(tig) ) {
+                tracePaths(tig, false, contigList, examined);
+            }
+        });
+
+        return new FermiLiteAssembly(contigList);
+    }
+
+    private static int countPredecessors( final Contig contig ) {
+        return contig.getConnections().stream().mapToInt(conn -> conn.isRC() ? 1 : 0).sum();
+    }
+
+    // called for each connected source and each connected sink that hasn't already been examined
+    private static void tracePaths( final Contig contig,
+                                    final boolean isRC,
+                                    final List<Contig> contigList,
+                                    final Set<Contig> examined ) {
+        examined.add(contig);
+        final LinkedList<Connection> path = new LinkedList<>();
+        for ( Connection connection : contig.getConnections() ) {
+            if ( connection.isRC() == isRC && connection.getOverlapLen() >= 0 ) {
+                extendPath(contig, connection, path, contigList, examined);
+            }
+        }
+    }
+
+    private static void extendPath( final Contig firstContig,
+                                    final Connection connection,
+                                    final LinkedList<Connection> path,
+                                    final List<Contig> contigList,
+                                    final Set<Contig> examined ) {
+        //TODO: bust up cycles and paths that need phasing
+        final boolean isCycle =
+                path.stream().anyMatch(conn ->
+                    conn.getTarget() == connection.getTarget() && conn.isTargetRC() == connection.isTargetRC());
+        path.push(connection);
+        boolean atEndOfPath = true;
+        if ( !isCycle ) {
+            final Contig target = connection.getTarget();
+            examined.add(target);
+            final int nPredecessors = countPredecessors(target);
+            final int nSuccessors = target.getConnections().size() - nPredecessors;
+            boolean needsPhasing = nPredecessors > 1 && nSuccessors > 1;
+            if ( needsPhasing ) {
+                tracePaths( target, connection.isTargetRC(), contigList, examined );
+            } else {
+                for ( Connection conn : target.getConnections() ) {
+                    if ( conn.isRC() == connection.isTargetRC() && conn.getOverlapLen() >= 0 ) {
+                        extendPath(firstContig, conn, path, contigList, examined);
+                        atEndOfPath = false;
+                    }
+                }
+            }
+        }
+        if ( atEndOfPath ) {
+            contigList.add(joinContigs(firstContig, path));
+        }
+        path.pop();
+    }
+
+    private static final class ContigLocation {
+        private final Contig contig;
+        private final int offset;
+        private final boolean canonical;
+        public ContigLocation(final Contig contig, final int offset, final boolean canonical ) {
+            this.contig = contig;
+            this.offset = offset;
+            this.canonical = canonical;
+        }
+        public Contig getContig() { return contig; }
+        public int getOffset() { return offset; }
+        public boolean isCanonical() { return canonical; }
+
+        @Override public boolean equals( final Object obj ) {
+            return obj instanceof ContigLocation && equals((ContigLocation)obj);
+        }
+
+        public boolean equals( final ContigLocation that ) {
+            if ( this == that ) return true;
+            return contig == that.contig && offset == that.offset && canonical == that.canonical;
+        }
+
+        @Override public int hashCode() {
+            return 47 * (47 * (contig.hashCode() + 47 * offset) + (canonical ? 31 : 5));
+        }
+    }
+
+    private static final class KmerLocation implements Map.Entry<SVKmerShort, ContigLocation> {
+        private final SVKmerShort kmer;
+        private final ContigLocation location;
+
+        public KmerLocation( final SVKmerShort kmer, final ContigLocation location ) {
+            this.kmer = kmer;
+            this.location = location;
+        }
+
+        public SVKmerShort getKmer() { return kmer; }
+        public ContigLocation getLocation() { return location; }
+        @Override public SVKmerShort getKey() { return kmer; }
+        @Override public ContigLocation getValue() { return location; }
+        @Override public ContigLocation setValue(final ContigLocation value ) {
+            throw new UnsupportedOperationException("KmerLocation is immutable");
+        }
+    }
+
+    private static final class ContigStrand {
+        private final Contig contig;
         private final boolean isRC;
 
-        public ContigStrand( final int contigId, final boolean isRC ) {
-            this.contigId = contigId;
+        public ContigStrand( final Contig contig, final boolean isRC ) {
+            this.contig = contig;
             this.isRC = isRC;
         }
 
-        public int getId() { return contigId; }
+        public Contig getContig() { return contig; }
         public boolean isRC() { return isRC; }
 
-        public ContigStrand rc() { return new ContigStrand(contigId, !isRC); }
+        public ContigStrand rc() { return new ContigStrand(contig, !isRC); }
 
         @Override public boolean equals( final Object obj ) {
             return obj instanceof ContigStrand && equals((ContigStrand) obj);
         }
 
         public boolean equals( final ContigStrand that ) {
-            return contigId == that.contigId && isRC == that.isRC;
+            if ( this == that ) return true;
+            return contig == that.contig && isRC == that.isRC;
         }
 
         @Override public int hashCode() {
-            int hashVal = 113;
-            hashVal = 47 * (hashVal + contigId);
-            return 47 * (hashVal + (isRC ? 3 : 5));
-        }
-
-        @Override public int compareTo( final ContigStrand that ) {
-            int result = Integer.compare(contigId, that.contigId);
-            if ( result == 0 ) result = Boolean.compare(isRC, that.isRC);
-            return result;
-        }
-    }
-
-    private static final class Link {
-        private final ContigStrand contigStrandSource;
-        private final ContigStrand contigStrandTarget;
-
-        /** Canonicalizing constructor: will swizzle to guarantee that id1 <= id2 */
-        public Link(final ContigStrand contigStrandSource, final ContigStrand contigStrandTarget) {
-            if ( contigStrandSource.getId() < contigStrandTarget.getId() ) {
-                this.contigStrandSource = contigStrandSource;
-                this.contigStrandTarget = contigStrandTarget;
-            } else {
-                this.contigStrandSource = contigStrandTarget.rc();
-                this.contigStrandTarget = contigStrandSource.rc();
-            }
-        }
-
-        public int getSourceId() { return contigStrandSource.getId(); }
-        public boolean isSourceRC() { return contigStrandSource.isRC(); }
-        public ContigStrand getSource() { return contigStrandSource; }
-        public int getTargetId() { return contigStrandTarget.getId(); }
-        public boolean isTargetRC() { return contigStrandTarget.isRC(); }
-        public ContigStrand getTarget() { return contigStrandTarget; }
-
-        @Override public boolean equals( final Object obj ) {
-            return obj instanceof Link && equals((Link)obj);
-        }
-
-        public boolean equals( final Link link ) {
-            return this == link ||
-                    (contigStrandSource.equals(link.contigStrandSource) && contigStrandTarget.equals(link.contigStrandTarget));
-        }
-
-        @Override public int hashCode() {
-            int hashVal = 113;
-            hashVal = 47 * (hashVal + contigStrandSource.hashCode());
-            return 47 * (hashVal + contigStrandTarget.hashCode());
+            return 47 * (contig.hashCode() + (isRC ? 3 : 5));
         }
     }
 }

@@ -36,7 +36,6 @@ public class AssembleAndAlign extends CommandLineProgram {
         final int kmerSize = 31;
         final int minQ = 10;
         final int maxValidQualSum = 60;
-        final int maxMismatches = 5;
 
         // read the reads
         final List<FastqRead> reads = SVFastqUtils.readFastqFile(fastqFile);
@@ -60,59 +59,6 @@ public class AssembleAndAlign extends CommandLineProgram {
             }
         });
 
-        // remove contigs that vary by a small number of SNPs from another, larger contig
-        final Set<Contig> contigsToRemove = new HashSet<>();
-        final Set<ContigLocation> testedLocations = new HashSet<>();
-        assembly.getContigs().forEach(tig -> {
-            final byte[] tigBases = tig.getSequence();
-            int tigOffset = 0;
-            final SVKmerizer kmerItr = new SVKmerizer(tig.getSequence(), kmerSize, new SVKmerShort(kmerSize));
-            while ( kmerItr.hasNext() ) {
-                final SVKmerShort contigKmer = (SVKmerShort)kmerItr.next();
-                final SVKmerShort canonicalContigKmer = contigKmer.canonical(kmerSize);
-                final boolean canonical = contigKmer.equals(canonicalContigKmer);
-                final Iterator<KmerLocation> locItr = kmerMap.findEach(canonicalContigKmer);
-                while ( locItr.hasNext() ) {
-                    final ContigLocation contigLocation = locItr.next().getLocation();
-                    final Contig tig2 = contigLocation.getContig();
-                    if ( tig == tig2 ) continue;
-                    final byte[] tig2Bases = tig2.getSequence();
-                    final boolean isRC = canonical != contigLocation.isCanonical();
-                    final int tig2Offset =
-                            isRC ? tig2Bases.length - contigLocation.getOffset() - kmerSize : contigLocation.getOffset();
-                    if ( tigOffset > tig2Offset ) continue;
-                    final int lenCmp = Integer.compare(tigBases.length - tigOffset, tig2Bases.length - tig2Offset);
-                    final int tig2Start = tig2Offset - tigOffset;
-                    if ( lenCmp > 0 || (lenCmp == 0 && tig2Start == 0) ) continue;
-                    if ( testedLocations.add(new ContigLocation(tig2, tig2Start, isRC)) ) {
-                        int nMismatches = 0;
-                        if ( !isRC ) {
-                            for ( int idx = 0; idx != tigBases.length; ++idx ) {
-                                if ( tigBases[idx] != tig2Bases[tig2Start+idx] ) {
-                                    if ( (nMismatches += 1) > maxMismatches ) break;
-                                }
-                            }
-                        } else {
-                            final int contigRCOffset = tig2Bases.length - tig2Start - 1;
-                            for ( int idx = 0; idx != tigBases.length; ++idx ) {
-                                if ( tigBases[idx] != BaseUtils.simpleComplement(tig2Bases[contigRCOffset-idx]) ) {
-                                    if ( (nMismatches += 1) > maxMismatches ) break;
-                                }
-                            }
-                        }
-                        if ( nMismatches <= maxMismatches ) {
-                            contigsToRemove.add(tig);
-                            break;
-                        }
-                    }
-                }
-                tigOffset += 1;
-            }
-        });
-
-        System.out.println("Removing " + contigsToRemove.size() + "/" + assembly.getContigs().size() + " shadowed contigs.");
-        return null;
-/*
         // make a map of contigs onto ids (which are just indices into the list of contigs)
         final Map<Contig, Integer> contigIdMap = new HashMap<>(SVUtils.hashMapCapacity(assembly.getNContigs()));
         for ( int id = 0; id != assembly.getNContigs(); ++id ) {
@@ -160,7 +106,6 @@ public class AssembleAndAlign extends CommandLineProgram {
             System.out.println(sb);
         }
         return null;
-*/
     }
 
     private static int trimmedLen( final FastqRead read, final int minQ ) {

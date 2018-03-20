@@ -109,7 +109,13 @@ public class StructuralVariationDiscoveryArgumentCollection implements Serializa
         public boolean writeGFAs = false;
 
         @Argument(doc = "Aggressively simplify local assemblies, ignoring small variants.", fullName = "pop-variant-bubbles")
-        public boolean popVariantBubbles = false;
+        public boolean popVariantBubbles = true;
+
+        @Argument(doc = "Simplify local assemblies by removing contigs shadowed by similar contigs.", fullName = "remove-shadowed-contigs")
+        public boolean removeShadowedContigs = true;
+
+        @Argument(doc = "Traverse assembly graph and produce contigs for all paths.", fullName = "expand-assembly-graph")
+        public boolean expandAssemblyGraph = true;
 
         // --------- locations ----------
 
